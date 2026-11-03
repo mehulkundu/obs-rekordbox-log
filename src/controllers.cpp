@@ -153,10 +153,13 @@ Ctl Mapper::map(const std::string &src, uint8_t status, uint8_t d1, uint8_t d2)
 			return named("fx.beat.prev", v);
 		if (ch == 4 && d1 == 0x4B)
 			return named("fx.beat.next", v);
-		if (ch == 4 && d1 == 0x10 && d2)
-			return named("fx.beat.channel", 1);
-		if (ch == 5 && d1 == 0x11 && d2)
-			return named("fx.beat.channel", 2);
+		if ((ch == 4 && d1 == 0x10) || (ch == 5 && d1 == 0x11)) {
+			if (!d2) { // the release says nothing new
+				out.kind = Kind::consumed;
+				return out;
+			}
+			return named("fx.beat.channel", ch == 4 ? 1 : 2);
+		}
 		if (ch == 6 && d1 == 0x46)
 			return named("deck1.load", v);
 		if (ch == 6 && d1 == 0x47)

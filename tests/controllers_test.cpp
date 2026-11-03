@@ -43,6 +43,7 @@ int main()
 	assert(c.name == "fx.beat.on");
 	c = m.map(flx, 0x95, 0x11, 0x7F);
 	assert(c.name == "fx.beat.channel" && c.v == 2);
+	assert(m.map(flx, 0x94, 0x10, 0x00).kind == Kind::consumed);
 
 	// LSB with no MSB yet, unknown message, unknown device: all raw
 	assert(m.map(flx, 0xB0, 0x27, 0x10).kind == Kind::unknown);
