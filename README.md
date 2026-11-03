@@ -53,28 +53,40 @@ The format is in [`docs/format.md`](docs/format.md).
 ## Analyse
 
 ```bash
-pip install pyrekordbox
+python3 -m pip install pyrekordbox numpy   # names and audio, both optional (use a venv if pip refuses)
 python3 analysis/rekordbox_log.py ~/Movies/"My Set.rekordbox.jsonl"
 ```
 
-This writes a `My Set.analysis/` folder next to the log:
+This writes a `My Set.analysis/` folder next to the log. **Give `edit.md` and the video to your
+editor or AI.** It stays under about 300 lines for an hour-long set:
 
-| File | What's in it |
+| Section of `edit.md` | What it's for |
 |---|---|
-| `tracklist.json` | Each track: title, artist, BPM, key, file, deck, when it was loaded and started |
-| `transitions.json` | Each change of deck: `start` (new track audible), `swap` (new track as loud as the old), `end` (old track gone), and the EQ/trim/CFX moves in between |
-| `fx.json` | Beat FX on/off spans with channel and level, and CFX filter spans with their peak |
-| `chapters.txt` | YouTube chapters, ready to paste into the description |
+| Now playing | Lower thirds: each track's on-air span and when to show its name |
+| Transitions | Each one labelled (bass swap, drop swap, wordplay, filter out, ...) with the evidence |
+| Edit cues | Drops to punch in on, tricks to show hands for, breakdowns for calm shots |
+| Energy | Bass per minute, and thumbnail candidates |
+| Checks | Silence, a deck stopped while audible, long idle stretches |
+| Clips | Every clip for shorts, ranked, with a checkbox to tick (`- [ ] C07 ...`) |
+| YouTube chapters | Ready to paste |
 
-All times are seconds into the video, with paused time removed. Track names come from your own
-Rekordbox play history, which Rekordbox writes while it runs, so you don't need to quit it first.
-Rekordbox only adds a track once it has played for 60 seconds. A track played for less than
-that, or one played when `pyrekordbox` isn't installed, is named by its deck ("Deck 2").
+For the detail behind any line, print the moves in that stretch:
 
-To have the set's audio in the video, add Rekordbox's output to OBS (an Audio Output Capture source
-for Rekordbox, or your audio interface as an Audio Input Capture).
+```bash
+python3 analysis/rekordbox_log.py window ~/Movies/"My Set.rekordbox.jsonl" 14:00 14:40
+```
 
-Check your setup: `python3 analysis/rekordbox_log.py --selftest`.
+The folder also has `clips.json` (every clip, for scripts), `moves.jsonl` (every gesture),
+`tracklist.json`, `transitions.json`, `fx.json` and `chapters.txt`. All times are seconds into the
+video, with paused time removed.
+
+Track names come from your Rekordbox play history, which Rekordbox writes while it runs. A track
+gets in once it has played for 60 seconds. Shorter ones are named by deck ("Deck 2").
+Drops come from the video's audio, so add Rekordbox's output to OBS: an Audio Output Capture for
+Rekordbox, or your audio interface as an Audio Input Capture. Without audio, or without numpy and
+ffmpeg, the sheet still has everything except drops and energy, and says why.
+
+Check your setup: `python3 analysis/test_analysis.py`.
 
 ## Contributing
 
