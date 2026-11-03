@@ -1,7 +1,7 @@
 # obs-rekordbox-log: design
 
 Date: 2026-11-03. Status: approved in brainstorming, awaiting spec review.
-Open source (MIT) at github.com/mehulkundu/obs-rekordbox-log.
+Open source (GPL-2.0, like OBS and its plugin template) at github.com/mehulkundu/obs-rekordbox-log.
 
 ## Goal
 
@@ -131,12 +131,13 @@ EQ, trim and CFX at centre (0.5) until their first event.
   deck by pairing it with the nearest preceding `deckN.load` not already used. Its start
   becomes that deck's next `deckN.play` press. If there is no load (loaded with the mouse),
   `deck` is null and the start is the history `created_at`.
-- `transitions.json`: one per track change on decks. `start` = the first time after the
-  incoming track's `deckN.load` that the incoming deck's `fader` crosses 0.1 upward, or the crossfader moves more than 0.1 toward it, while the
-  outgoing deck is audible (fader > 0.1). `swap` = the incoming deck's level passes the
-  outgoing one, where a deck's level is its fader times its crossfader gain (linear: deck 1
-  gain = 1 - x, deck 2 = x). `end` = the outgoing deck's level drops below 0.1. EQ moves on
-  both decks inside the window are listed.
+- `transitions.json`: one per pair of consecutive tracks on different decks. A deck's
+  level is 0 while it is not playing (play presses toggle it; cue and load stop it), and
+  otherwise its fader times its crossfader gain (deck 1: min(1, 2(1 - x)), deck 2:
+  min(1, 2x), so both are full at the centre, like Rekordbox's default curve). After the
+  incoming track's `deckN.load`: `start` = the incoming level first goes above 0.1, `swap`
+  = the incoming level reaches the outgoing one, `end` = the outgoing level drops below 0.1.
+  EQ, trim and CFX moves on both decks inside the window are listed.
 - `fx.json`: spans of `fx.beat.on` with the channel and level at that moment, and spans
   where `deckN.cfx` is away from centre (|v - 0.5| > 0.05).
 - `chapters.txt`: YouTube chapters (`0:00 Title - Artist`, `1:00:16` past an hour), first at
@@ -151,7 +152,8 @@ FX span) and asserts the outputs.
 
 ## Testing
 
-1. `tests/controllers_test.cpp` (ctest): raw bytes in, expected `{ctl, v}` out, for buttons, a
+1. `tests/controllers_test.cpp` and `tests/session_test.cpp`, plain `assert` programs built
+   with `clang++` (no test framework): raw bytes in, expected `{ctl, v}` out, for buttons, a
    14-bit fader pair (MSB then LSB), jog, an unknown message and an unknown device.
 2. `rekordbox_log.py --selftest`.
 3. End to end: OBS record 2 min. Play deck 1, load and blend in deck 2 with EQ and one Beat
@@ -163,7 +165,7 @@ FX span) and asserts the outputs.
 
 ## Distribution
 
-- MIT licence. README says it is not affiliated with AlphaTheta or Pioneer DJ, and that it
+- GPL-2.0 (OBS and the template are GPL-2.0). README says it is not affiliated with AlphaTheta or Pioneer DJ, and that it
   only reads the user's own Rekordbox database.
 - Releases: the template's GitHub Actions build a macOS `.pkg`. Without an Apple Developer ID
   it is unsigned, so the README gives the right-click > Open / `xattr -dr com.apple.quarantine`
