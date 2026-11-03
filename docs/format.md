@@ -16,7 +16,7 @@ written and flushed as it happens. For a recording, the file has the video's nam
 | `v` | Format version. |
 | `output` | `record` or `stream`. |
 | `wall` | Local wall-clock time when the output started (ISO 8601, ms, UTC offset). |
-| `offset_ms` | Added to every `t` to line up with the video. 0 by default. Set it by hand if a clap test shows a gap. |
+| `offset_ms` | Added to every `t` to line up with the video. 0 by default. Set it by hand if a clap test shows a gap. Measured with a DDJ-FLX4, Rekordbox 7.2 and OBS 33: the log was never behind the video, and a deck's sound reached the mic 73 ms or more after its Cue press, most of that being Rekordbox's audio delay. 0 is fine for editing. |
 | `obs`, `plugin` | Versions. |
 
 ## Events
