@@ -143,7 +143,8 @@ Every transition, every drop and every moment becomes a candidate. The windows:
       `crossfader cut`, `filter sweep`, `beat fx`, `sampler hit`
     - 0.5: `long blend`, `quick mix`
     - 0: `drop` clips
-  - **Energy jump**, 0-2: smoothed bass 5 s after the moment minus 5 s before, scaled.
+  - **Energy jump**, 0-2: (smoothed bass 5 s after the moment minus 5 s before) ÷ `F`,
+    clamped to 0-2. It is 0 without audio.
   - **Both songs named**, +0.5.
 - **Reason:** the parts of the score in words, e.g.
   `confirmed drop, drop swap, big energy jump, both songs named`.
