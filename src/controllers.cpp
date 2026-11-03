@@ -171,6 +171,10 @@ Ctl Mapper::map(const std::string &src, uint8_t status, uint8_t d1, uint8_t d2)
 
 	if (type == 0xB0) {
 		uint8_t n = d1 & 0x1F;
+		if (ch == 5 && n == 0x02 && d1 < 0x40) { // the FX level knob also sends a copy on channel 5
+			out.kind = Kind::consumed;
+			return out;
+		}
 		const char *cc14 = nullptr;
 		if (d1 < 0x40) {
 			if (ch < 2)

@@ -30,6 +30,8 @@ int main()
 	m.map(flx, 0xB4, 0x02, 0x7F);
 	c = m.map(flx, 0xB4, 0x22, 0x7F);
 	assert(c.name == "fx.beat.level" && c.v == 1);
+	assert(m.map(flx, 0xB5, 0x02, 0x7F).kind == Kind::consumed); // its channel 5 copy
+	assert(m.map(flx, 0xB5, 0x22, 0x7F).kind == Kind::consumed);
 
 	c = m.map(flx, 0xB0, 0x22, 0x3E); // jog back 2
 	assert(c.name == "deck1.jog" && c.v == -2);
