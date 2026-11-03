@@ -215,6 +215,38 @@ def test_moments():
     assert ('drop mixing', 100) in [(m['style'], m['moment']) for m in find_moments([], Timeline([]), rows, 500)]
 
 
+def kicks(x, sr, a, b, bpm=128):
+    import numpy as np
+    seg = np.arange(int(0.15 * sr)) / sr
+    pulse = 0.8 * np.sin(2 * np.pi * 60 * seg) * np.exp(-seg * 25)
+    for t in np.arange(a, b, 60 / bpm):
+        i = int(t * sr)
+        x[i:i + pulse.size] += pulse[:len(x) - i]
+
+
+def test_audio():
+    try:
+        import numpy as np
+    except ImportError:
+        print('  (audio tests skipped: numpy not installed)')
+        return
+    from audio import analyse_audio, SR
+    rng = np.random.default_rng(1)
+    x = np.convolve(0.03 * rng.standard_normal(90 * SR), [1, -1], mode='same')  # hats: not silent
+    kicks(x, SR, 30, 90)
+    a, why = analyse_audio(x.astype(np.float32))
+    assert why is None and a['drops'] == [30.0] and a['breakdowns'] == [] and a['silence'] == [], a['drops']
+    y = np.convolve(0.03 * rng.standard_normal(170 * SR), [1, -1], mode='same')
+    kicks(y, SR, 20, 60), kicks(y, SR, 85, 117), kicks(y, SR, 120, 140), kicks(y, SR, 142, 170)
+    y[140 * SR:142 * SR] = 0
+    b, _ = analyse_audio(y.astype(np.float32))
+    assert [round(d) for d in b['drops']] == [20, 85], b['drops']  # the 3 s gap at 117 is not a new drop
+    assert len(b['breakdowns']) == 1 and abs(b['breakdowns'][0][0] - 60.5) < 1, b['breakdowns']
+    assert b['silence'] == [(140.2, 142.0)], b['silence']
+    a, why = analyse_audio(np.zeros(SR * 5, np.float32))
+    assert a is None and 'silent' in why
+
+
 if __name__ == '__main__':
     only = sys.argv[1] if len(sys.argv) > 1 else ''
     if not only:
