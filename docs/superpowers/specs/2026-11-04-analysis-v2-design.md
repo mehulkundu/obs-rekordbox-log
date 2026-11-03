@@ -1,6 +1,6 @@
 # Analysis v2: an edit sheet for editors and AI
 
-Date: 2026-11-04. Status: approved in brainstorming, revised after spec review.
+Date: 2026-11-04. Status: approved. Revised after spec review, then against the two real recordings while drafting the plan.
 Builds on `2026-11-03-obs-rekordbox-log-design.md`. The plugin and the raw log do not change.
 
 ## Why
@@ -35,8 +35,9 @@ going down, or down after going up).
   step sign flips.
 - **Buttons:** one move per press (`v` = 1), with `start` = `end`. Releases are dropped.
 
-Times are in video time (v1's `vt`). `moves.jsonl` is this list. `window` reads it if it is
-there, and otherwise builds it from the raw log.
+The FX channel lever (`fx.beat.channel`) counts as a position control, and its value is the
+deck number. Times are in video time (v1's `vt`). `moves.jsonl` is this list, for scripts. `window`
+builds the moves from the raw log.
 
 ## 2. Tracks, levels and transition windows
 
@@ -66,7 +67,9 @@ features in the window (or none), and the two decks' numbers. Each returns `None
   `deck1 fader 1.00->0.00 and deck2 0.00->1.00 within 0.12 s`.
 
 All rules run. Every match is kept in `styles`, and the first match in table order is `style`.
-If nothing matches, the style is `unusual`.
+If nothing matches, the style is `unusual`. The order is: tricks first, then how the decks were
+mixed, then how the old track left, then blends. The sheet shows all of a transition's styles,
+joined with ` + `, leaving out the blend kinds when anything else matched.
 
 Transitions, in priority order (A = outgoing deck, B = incoming deck; "B starts" means the
 transition's `start`, when B becomes audible):
@@ -76,15 +79,15 @@ transition's `start`, when B becomes audible):
 | `wordplay` | A has 3 or more presses of `loop.in`, `loop.half`, any `pad.beatloop.*`, or the same `pad.hotcue.N` in the 8 s before B starts, and B starts within 1 s of A's last such press | B starts |
 | `loop roll` | 3 or more presses of `loop.half` or `pad.beatloop.*` on A within 8 s, then A's level drops below 0.1 within 4 s of the last | the last press |
 | `spinback` | `deckA.jog` moves (the top platter, not `jog.side` or `jog.search`) totalling -40 steps or fewer within 1 s, then A's level drops below 0.1 within 1 s. Negative = backwards; the sign is checked on the fixture | the burst |
-| `double drop` | Both decks at level 0.8 or more with both `eq.low` at 0.4 or more for at least 4 s | where both are full |
+| `double drop` | Both decks at level 0.8 or more with both `eq.low` at 0.4 or more for at least 4 s, with an audio drop in that stretch. Without the audio this is only a blend with the EQs left alone | the audio drop |
 | `drop swap` | A's level drops by at least 0.7 and B's rises by at least 0.7, both within 0.3 s of each other, with less than 2 s of overlap before | the cut |
-| `echo out` | `fx.beat.on` with the last `fx.beat.channel` = A, within 8 s before A's level drops below 0.1 | A's drop |
 | `scratch` | 10 or more `jog` moves on one deck within 5 s, with 4 or more `deckN.fader` or `mixer.crossfader` moves in the same span | the span's start |
-| `filter out` | A's `cfx` moves to at least 0.3 from centre while A's level falls | the sweep's end |
-| `filter in` | B's `cfx` returns to centre (within 0.05) from at least 0.3 off while B's level rises | the sweep's end |
-| `three-band swap` | For each of low, mid and high, B goes up and A goes down within 2 s of each other, with the three bands at least 2 s apart | the low swap |
-| `bass swap` | B's `eq.low` is 0.2 or below when B starts, then B's low rises above 0.4 and A's falls below 0.2 within 2 s of each other | the low crossing |
-| `tempo ramp` | A's or B's `tempo` moves by at least 0.05 during the overlap | mid-ramp |
+| `three-band swap` | A band swap (below) for each of low, mid and high, with the three at least 2 s apart | the low swap |
+| `bass swap` | A low swap: a move of B's `eq.low` from 0.2 or below to above 0.4, and a move of A's `eq.low` from above 0.2 to below 0.2, ending within 4 s of each other (about 2 bars at 128 BPM). DJs often swap back and forth, so the moment is the last swap in the window | the last low swap |
+| `echo out` | `fx.beat.on` turning the effect on while `fx.beat.channel` = A, within 8 s before A's level drops below 0.1 | A's drop |
+| `filter out` | A's `cfx` moves to at least 0.3 from centre while A fades: A's level 4 s after the move is at least 0.2 below its level at the start | the sweep's end |
+| `filter in` | B's `cfx` moves back to centre (within 0.05) from at least 0.3 off while B rises: B's level at the end is at least 0.2 above its level 4 s before the start | the sweep's end |
+| `tempo ramp` | A's or B's `tempo` moves during the overlap add up to a change of at least 0.05. This is measured from moves, because an untouched slider's real position is unknown | mid-ramp |
 | `crossfader cut` | 4 or more `mixer.crossfader` moves of more than 0.5 each within 3 s | the first move |
 | `long blend` | Overlap of at least 16 s | the swap |
 | `quick mix` | Overlap under 4 s | the swap |
@@ -94,12 +97,12 @@ The edit sheet shows `unusual` windows with their moves, so an AI can judge them
 Moments outside transitions are found across the whole set, with the same shape:
 - `loop roll` and `scratch`, as above
 - `hot cue juggling`: 6 or more `pad.hotcue.*` presses on one deck within 8 s
-- `sampler hit`: `pad.sampler.*` presses, with presses less than 8 s apart merged into one moment
-- `beat fx`: each `fx.beat.on` span
-- `filter sweep`: each `cfx` move of at least 0.3 from centre
+- `sampler hit`: `pad.sampler.*` presses on one deck, with presses less than 8 s apart merged into one moment
+- `beat fx`: each `fx.beat.on` span, with its channel
+- `filter sweep`: `cfx` moves to at least 0.3 from centre on one deck, with sweeps less than 8 s apart merged
 - `drop mixing`: 3 or more `drop swap`s in a row, with each track on for under 60 s
 
-A moment inside a transition window whose `styles` already holds it is skipped.
+A moment is skipped when a transition already has a match that covers it, within 5 s of it: `loop roll` by `loop roll` or `wordplay`, `scratch` by `scratch`, `filter sweep` by `filter out` or `filter in`, and `beat fx` by `echo out`.
 
 ## 4. Audio (`analysis/audio.py`)
 
@@ -107,8 +110,9 @@ A moment inside a transition window whose `styles` already holds it is skipped.
   `.mp4`, `.mkv`, `.flv`, `.ts`, `.m4v`), or `--video PATH`. The audio is read through ffmpeg as
   mono, 11,025 Hz, 32-bit float PCM on stdout. Its time base is the video's, the same as `vt`.
 - **Features**, every 0.1 s (numpy FFT over 0.2 s frames): `bass` (30-150 Hz energy) and `rms`.
-  `bass` is smoothed with a 1 s moving mean before any threshold, so the dips between kicks don't
-  count. `F` = 0.7 × the set's 95th-percentile smoothed bass, and "full" means at least `F`.
+  `bass` is smoothed before any threshold, so the dips between kicks don't count: first a 0.6 s
+  moving maximum (this bridges the gap between kicks at 100 BPM and up), then a 1 s moving mean.
+  `F` = 0.7 × the set's 95th-percentile smoothed bass, and "full" means at least `F`.
 - **Drops:** the smoothed bass reaches `F` and stays there for 8 s, after 20 s with no 2 s stretch
   at `F`. A re-hit within 6 s of the last drop is the same drop. The drop time then moves back to
   the first frame within 2 s before it where the raw `bass` passes 0.5F, which is the first kick.
@@ -207,8 +211,11 @@ The two real logs become gzipped fixtures:
   rule and just miss it.
 - Moves: a back-and-forth crossfader chop gives one move per direction, and a jog burst gives a
   `steps` sum.
-- Real fixtures: `flx4-bassswap` gives one transition whose `styles` include `bass swap`, with its
-  moment between 1:15 and 1:23. Both fixtures come in under the line budget scaled to their length.
+- Real fixtures:
+  - `flx4-bassswap` gives one transition with style `bass swap` and its moment between 1:10 and
+    1:15, the last of two low swaps (1:12.4). `filter out` is also in its `styles`.
+  - `flx4-cues` gives a `bass swap` between 1:45 and 1:52. Its knobs moved 2.4 s apart.
+  - Both come in under the line budget scaled to their length.
 - Audio: a generated 90 s signal gives one drop at 30.0 s ± 0.1 s, with no breakdown and no silence.
   The signal is quiet for 30 s, then kick-like 60 Hz pulses at 128 BPM. A silent file skips audio
   with a reason.
