@@ -67,9 +67,12 @@ This writes a `My Set.analysis/` folder next to the log:
 | `chapters.txt` | YouTube chapters, ready to paste into the description |
 
 All times are seconds into the video, with paused time removed. Track names come from your own
-Rekordbox play history. Without `pyrekordbox`, the script still writes everything else and
-names tracks by deck. If the tracklist comes out without names, quit Rekordbox and run it again.
-Rekordbox may not have saved its history yet.
+Rekordbox play history, which Rekordbox writes while it runs, so you don't need to quit it first.
+Rekordbox only adds a track once it has played for 60 seconds. A track played for less than
+that, or one played when `pyrekordbox` isn't installed, is named by its deck ("Deck 2").
+
+To have the set's audio in the video, add Rekordbox's output to OBS (an Audio Output Capture source
+for Rekordbox, or your audio interface as an Audio Input Capture).
 
 Check your setup: `python3 analysis/rekordbox_log.py --selftest`.
 

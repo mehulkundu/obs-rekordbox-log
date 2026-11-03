@@ -15,6 +15,9 @@ from pathlib import Path
 
 
 AUDIBLE = 0.1
+# Rekordbox adds a track to its history once it has played this long (60.007 s measured on
+# Rekordbox 7.2 with a DDJ-FLX4).
+HISTORY_DELAY = 60
 
 
 def load(path):
@@ -128,20 +131,41 @@ def find_tracks(ctls, history, end_t):
         tr['start'] = next((e['t'] for e in ctls[tr['i'] + 1:until]
                             if e['ctl'] == f'deck{d}.play' and e['v'] == 1), None)
     tracks = [tr for tr in tracks if tr['start'] is not None]
+    # A deck played before any load in the log was loaded before Record (or with the mouse).
+    for d in (1, 2):
+        first_load = next((i for i, e in enumerate(ctls) if e['ctl'] == f'deck{d}.load' and e['v'] == 1), len(ctls))
+        play = next((i for i, e in enumerate(ctls[:first_load]) if e['ctl'] == f'deck{d}.play' and e['v'] == 1), None)
+        if play is not None:
+            tracks.append({'deck': d, 'load': None, 'start': ctls[play]['t'], 'i': play})
 
     used = set()
     for h in history:
         names = {k: h[k] for k in ('title', 'artist', 'bpm', 'key', 'path')}
-        free = [i for i, tr in enumerate(tracks) if i not in used and tr['load'] is not None and tr['load'] <= h['t']]
+        free = [i for i, tr in enumerate(tracks) if i not in used and tr['i'] is not None and tr['start'] <= h['t']]
         if free:
-            i = max(free, key=lambda i: tracks[i]['load'])
+            i = min(free, key=lambda i: abs(h['t'] - tracks[i]['start'] - HISTORY_DELAY))
             used.add(i)
             tracks[i].update(names)
-        else:  # loaded with the mouse: no load press to pair with
+        else:  # no load or play press to pair with
             tracks.append({'deck': None, 'load': None, 'start': h['t'], 'i': None, **names})
-    if history:  # played but never reached the history: previewed in headphones only
-        tracks = [tr for tr in tracks if 'title' in tr]
+    # A track Rekordbox hasn't put in its history (it waits about a minute) is kept if it was
+    # heard. One never heard was only previewed in headphones.
+    tracks = [tr for tr in tracks if tr.get('title') or heard(tr, tracks, ctls)]
     return sorted(tracks, key=lambda tr: tr['start'])
+
+
+def heard(tr, tracks, ctls):
+    """True if the track's deck was audible at some point while the track was on it."""
+    if tr['i'] is None:
+        return True
+    until = min([x['i'] for x in tracks if x['deck'] == tr['deck'] and x['i'] is not None and x['i'] > tr['i']],
+                default=len(ctls))
+    m = Mixer()
+    for j, e in enumerate(ctls[:until]):
+        m.apply(e)
+        if j >= tr['i'] and m.level(tr['deck']) > AUDIBLE:
+            return True
+    return False
 
 
 def label(tr):
@@ -318,6 +342,20 @@ def selftest():
     r = analyse(header, events, [])
     assert [t['deck'] for t in r['tracklist']] == [1, 2]
     assert len(r['transitions']) == 1
+
+    # A deck loaded before Record starts a track at its first play. A track never heard (fader
+    # down the whole time) is dropped. A heard one stays, even before it reaches the history.
+    ev = [c(1, 'deck1.play', 1), c(5, 'deck2.load', 1), c(6, 'deck2.fader', 0.0), c(7, 'deck2.play', 1),
+          c(30, 'deck1.load', 1), c(31, 'deck1.play', 1), {'t': 40, 'type': 'end'}]
+    r = analyse(header, ev, [{'title': 'Pre', 'artist': 'P', 'bpm': None, 'key': None, 'path': '/p', 't': 3}])
+    assert [(t['deck'], t['load'], t['start'], t.get('title')) for t in r['tracklist']] == \
+        [(1, None, 1, 'Pre'), (1, 30, 31, None)], r['tracklist']
+
+    # Real FLX4 session: a history row lands 60 s after its track starts, after another deck has
+    # started. It belongs to the track that started 60 s earlier, not the latest one.
+    ev = [c(8.484, 'deck1.load', 1), c(17.534, 'deck1.play', 1), c(51.253, 'deck2.play', 1), {'t': 94, 'type': 'end'}]
+    r = analyse(header, ev, [{'title': 'Vatta Vatta', 'artist': 'AFTERAll', 'bpm': 130.0, 'key': '4A', 'path': '/v', 't': 77.541}])
+    assert [(t['deck'], t.get('title')) for t in r['tracklist']] == [(1, 'Vatta Vatta'), (2, None)], r['tracklist']
     print('selftest ok')
 
 
