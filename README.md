@@ -40,4 +40,4 @@ own Rekordbox library.
 
 ## License
 
-MIT
+GPL-2.0, like OBS Studio and the OBS plugin template this is built from. See `LICENSE`.
