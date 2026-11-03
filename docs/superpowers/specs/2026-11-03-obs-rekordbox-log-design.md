@@ -131,8 +131,8 @@ EQ, trim and CFX at centre (0.5) until their first event.
   deck by pairing it with the nearest preceding `deckN.load` not already used. Its start
   becomes that deck's next `deckN.play` press. If there is no load (loaded with the mouse),
   `deck` is null and the start is the history `created_at`.
-- `transitions.json`: one per track change on decks. `start` = the incoming deck's
-  `fader` first rises above 0.1, or the crossfader moves more than 0.1 toward it, while the
+- `transitions.json`: one per track change on decks. `start` = the first time after the
+  incoming track's `deckN.load` that the incoming deck's `fader` crosses 0.1 upward, or the crossfader moves more than 0.1 toward it, while the
   outgoing deck is audible (fader > 0.1). `swap` = the incoming deck's level passes the
   outgoing one, where a deck's level is its fader times its crossfader gain (linear: deck 1
   gain = 1 - x, deck 2 = x). `end` = the outgoing deck's level drops below 0.1. EQ moves on
