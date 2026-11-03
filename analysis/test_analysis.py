@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tests for the analysis.
 
-    $PY analysis/test_analysis.py           all of them (the audio tests need numpy)
-    $PY analysis/test_analysis.py moves     only tests whose name contains "moves"
+    python3 analysis/test_analysis.py           all of them (the audio tests need numpy)
+    python3 analysis/test_analysis.py moves     only tests whose name contains "moves"
 """
 import gzip
 import json
@@ -54,6 +54,8 @@ def take_out(t0=40, t1=41):
     return fade('deck1.fader', t0, t1, 1, 0)
 
 
+# --- moves ---------------------------------------------------------------------------------------
+
 def test_moves():
     ev = fade('mixer.crossfader', 0, 0.3, 0.5, 1.0) + fade('mixer.crossfader', 0.35, 0.6, 1.0, 0.0)
     ev += [c(1 + i * 0.05, 'deck1.jog', -5) for i in range(8)] + press(2, 'deck1.play') + [c(3, 'deck1.eq.low', 0.2)]
@@ -78,6 +80,8 @@ def test_timeline():
     assert tl.value('deck1.eq.low', 1) == 0.5 and tl.value('deck1.fader', 1) == 1.0  # untouched: usual spot
     assert tl.level(1, 31) == 0.0 and tl.level(2, 31) == 1.0  # crossfader hard to deck 2
 
+
+# --- transition rules: each one just meets and just misses -----------------------------------------
 
 def test_bass_swap():
     swap = fade('deck2.eq.low', 9, 9.3, 0.5, 0.0) + fade('deck2.eq.low', 30, 31, 0, 0.5)
@@ -193,6 +197,8 @@ def test_tempo_crossfader_blends():
     assert 'quick mix' in s, s
 
 
+# --- moments -------------------------------------------------------------------------------------
+
 def test_moments():
     from techniques import find_moments
     ev = []
@@ -214,6 +220,8 @@ def test_moments():
     rows = [{'style': 'drop swap', 'moment': t, 'matches': [], 't0': t - 10, 't1': t + 5} for t in (100, 140, 180)]
     assert ('drop mixing', 100) in [(m['style'], m['moment']) for m in find_moments([], Timeline([]), rows, 500)]
 
+
+# --- audio ---------------------------------------------------------------------------------------
 
 def kicks(x, sr, a, b, bpm=128):
     import numpy as np
@@ -245,6 +253,70 @@ def test_audio():
     assert b['silence'] == [(140.2, 142.0)], b['silence']
     a, why = analyse_audio(np.zeros(SR * 5, np.float32))
     assert a is None and 'silent' in why
+
+
+# --- real recordings and the size budget -----------------------------------------------------------
+
+def run_fixture(name):
+    ev = [json.loads(line) for line in gzip.open(HERE / 'fixtures' / f'{name}.jsonl.gz', 'rt') if line.strip()]
+    result = rl.analyse(ev[0], ev[1:], [])
+    moves, moments, clips, md = rl.build(result, f'{name}.rekordbox.jsonl', audio_reason='not in this test')
+    return result, moments, clips, md
+
+
+def test_fixtures():
+    for name, low, high in (('flx4-bassswap', 70, 75), ('flx4-cues', 105, 112)):
+        result, moments, clips, md = run_fixture(name)
+        (t,) = result['transitions']
+        assert t['style'] == 'bass swap' and low <= t['moment'] <= high, (name, t['styles'], t['moment'])
+        lines = md.count('\n')
+        assert lines <= 30 + 300 * result['end'] / 3600, (name, lines)
+    result, moments, clips, md = run_fixture('flx4-bassswap')
+    assert 'filter out' in result['transitions'][0]['styles']
+    assert '## Now playing' in md and '- [ ] C01' in md and 'bass swap' in md
+
+
+def test_budget():
+    """A 1-hour, 25-track set with something going on in every track stays under 300 lines."""
+    ev, history = [], []
+    for k in range(25):
+        t = k * 144.0
+        d, o = (1, 2) if k % 2 == 0 else (2, 1)
+        ev += press(t, f'deck{d}.load') + fade(f'deck{d}.fader', t, t + 0.2, 1, 0) + press(t + 1, f'deck{d}.play')
+        if k:
+            ev += fade(f'deck{d}.eq.low', t + 0.5, t + 0.8, 0.5, 0) + fade(f'deck{d}.fader', t + 10, t + 14, 0, 1)
+            ev += fade(f'deck{d}.eq.low', t + 30, t + 31, 0, 0.5) + fade(f'deck{o}.eq.low', t + 30, t + 31, 0.5, 0)
+            ev += fade(f'deck{o}.cfx', t + 36, t + 39, 0.5, 0.95) + fade(f'deck{o}.fader', t + 37, t + 40, 1, 0)
+        else:
+            ev += fade('deck1.fader', t + 2, t + 3, 0, 1)
+        ev += press(t + 80, f'deck{d}.pad.sampler.1') + fade(f'deck{d}.cfx', t + 100, t + 102, 0.5, 0.1) \
+            + fade(f'deck{d}.cfx', t + 103, t + 105, 0.1, 0.5)
+        history.append({'title': f'Song {k + 1}', 'artist': 'Artist', 'bpm': 124.0, 'key': '8A', 'path': f'/{k}',
+                        't': t + 61})
+    ev = sorted(ev, key=lambda e: e['t']) + [{'t': 3600.0, 'type': 'end'}]
+    result = rl.analyse(HEADER, ev, history)
+    moves, moments, clips, md = rl.build(result, 'set.rekordbox.jsonl', audio_reason='not in this test')
+    assert len(result['tracklist']) == 25 and len(result['transitions']) == 24
+    assert all('bass swap' in t['styles'] for t in result['transitions']), [t['styles'] for t in result['transitions']]
+    lines = md.count('\n')
+    assert lines <= 300, lines
+    return lines
+
+
+def test_unusual_cap():
+    """Many unusual transitions keep the Unusual section to 40 lines, plus one command for the rest."""
+    ev = []
+    for k in range(12):  # each deck comes in and the other goes out, 14 s of overlap: no known pattern
+        t, (d, o) = k * 60.0, ((1, 2) if k % 2 == 0 else (2, 1))
+        ev += press(t, f'deck{d}.load') + fade(f'deck{d}.fader', t, t + 0.2, 1, 0) + press(t + 1, f'deck{d}.play')
+        ev += fade(f'deck{d}.fader', t + 10, t + 11, 0, 1) + [c(t + 12 + i * 0.5, f'deck{d}.trim', 0.5 + i / 100) for i in range(8)]
+        if k:
+            ev += fade(f'deck{o}.fader', t + 24, t + 25, 1, 0)
+    result = rl.analyse(HEADER, sorted(ev, key=lambda e: e['t']), [])
+    moves, moments, clips, md = rl.build(result, 'odd.rekordbox.jsonl', audio_reason='not in this test')
+    assert sum(t['style'] == 'unusual' for t in result['transitions']) >= 5
+    section = md.split('## Unusual')[1].split('\n## ')[0].strip().splitlines()[1:]
+    assert len(section) <= 41 and 'more: rekordbox_log.py window' in section[-1], section
 
 
 if __name__ == '__main__':

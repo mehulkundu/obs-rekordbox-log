@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Turn an obs-rekordbox-log .jsonl into a tracklist, transitions, FX spans and YouTube chapters.
+"""Turn an obs-rekordbox-log .jsonl into an edit sheet: tracks, labelled transitions, drops and clips.
 
-    python3 rekordbox_log.py SET.rekordbox.jsonl [--out DIR]
+    python3 rekordbox_log.py SET.rekordbox.jsonl [--out DIR] [--video FILE]
+    python3 rekordbox_log.py window SET.rekordbox.jsonl FROM TO
     python3 rekordbox_log.py --selftest
 
-Track names come from Rekordbox's play history through pyrekordbox (pip install pyrekordbox).
-Without it, everything else still works and tracks are named by deck.
+Writes <name>.analysis/edit.md (for editors and AI), clips.json, moves.jsonl, tracklist.json,
+transitions.json, fx.json and chapters.txt. Track names come from Rekordbox's play history through
+pyrekordbox; drops come from the video's audio through numpy and ffmpeg. Without either, the rest works.
 """
 import argparse
 import json
@@ -62,20 +64,19 @@ def video_clock(header, events):
 
 
 def read_history(header, end_t):
-    """Rekordbox history rows played during the session, with t in log seconds."""
+    """(Rekordbox history rows played during the session with t in log seconds, why names are missing)."""
     try:
         from pyrekordbox import MasterDatabase
     except ImportError:
-        print('pyrekordbox not installed: tracks are named by deck', file=sys.stderr)
-        return []
+        return [], 'pyrekordbox not installed (pip install pyrekordbox): tracks are named by deck'
+
     # Rekordbox stores created_at as naive local time
     start = datetime.fromisoformat(header['wall']).astimezone().replace(tzinfo=None)
     end = start + timedelta(seconds=end_t)
     try:
         rows = [s for s in MasterDatabase().get_history_songs().all() if start <= s.created_at <= end]
     except Exception as err:  # database locked, key missing, schema changed
-        print(f'cannot read Rekordbox history ({err}): tracks are named by deck', file=sys.stderr)
-        return []
+        return [], f'cannot read Rekordbox history ({err}): tracks are named by deck'
     out = []
     for s in sorted(rows, key=lambda s: s.created_at):
         c = s.Content
@@ -85,7 +86,7 @@ def read_history(header, end_t):
             'title': c.Title, 'artist': c.ArtistName, 'bpm': c.BPM / 100 if c.BPM else None,
             'key': c.KeyName, 'path': c.FolderPath, 't': (s.created_at - start).total_seconds(),
         })
-    return out
+    return out, None
 
 
 def xfader_gain(deck, x):
@@ -195,13 +196,8 @@ def find_transitions(tracks, ctls):
                 end = e['t']
             if swap is not None and end is not None:
                 break
-        knobs = ('eq.hi', 'eq.mid', 'eq.low', 'cfx', 'trim')
-        stop = end if end is not None else swap
-        moves = [{'t': e['t'], 'ctl': e['ctl'], 'v': e['v']} for e in ctls
-                 if start is not None and stop is not None and start <= e['t'] <= stop
-                 and any(e['ctl'] == f'deck{d}.{k}' for d in (A, B) for k in knobs)]
         out.append({'into': i + 1, 'from': label(a), 'to': label(b), 'from_deck': A, 'to_deck': B,
-                    'start': start, 'swap': swap, 'end': end, 'moves': moves})
+                    'start': start, 'swap': swap, 'end': end})
     return out
 
 
@@ -258,46 +254,92 @@ def chapters(tracks, transitions):
 
 
 def analyse(header, events, history):
-    """history: [{'title', 'artist', 'bpm', 'key', 'path', 't'}] with t in log seconds."""
+    """history: [{'title', 'artist', 'bpm', 'key', 'path', 't'}] with t in log seconds.
+    Everything comes back in video time."""
     vt = video_clock(header, events)
-    ctls = [e for e in events if e['type'] == 'ctl']
-    end_t = events[-1]['t'] if events else 0
+    ctls = [{**e, 't': vt(e['t'])} for e in events if e['type'] == 'ctl']
+    end_t = vt(events[-1]['t']) if events else 0
+    history = [{**h, 't': vt(h['t'])} for h in history]
 
     tracks = find_tracks(ctls, history, end_t)
     transitions = find_transitions(tracks, ctls)
     fx = find_fx(ctls, end_t)
-
-    # Everything below is in video time.
     for tr in tracks:
-        tr['load'], tr['start'] = vt(tr['load']), vt(tr['start'])
         del tr['i']
-    for t in transitions:
-        t['start'], t['swap'], t['end'] = vt(t['start']), vt(t['swap']), vt(t['end'])
-        for mv in t['moves']:
-            mv['t'] = vt(mv['t'])
-    for s in fx:
-        s['start'], s['end'] = vt(s['start']), vt(s['end'])
     tracklist = [{'n': i + 1, **tr} for i, tr in enumerate(tracks)]
-    return {'tracklist': tracklist, 'transitions': transitions, 'fx': fx, 'chapters': chapters(tracks, transitions)}
+    return {'tracklist': tracklist, 'transitions': transitions, 'fx': fx, 'chapters': chapters(tracks, transitions),
+            'ctls': ctls, 'end': end_t}
+
+
+def build(result, log_name, audio=None, audio_reason=None, video=None, names_reason=None):
+    """Label transitions, find moments and clips, and write the edit sheet. Returns
+    (moves, moments, clips, edit.md text); result['transitions'] gains style, styles, moment, evidence."""
+    from moves import find_moves, Timeline
+    from techniques import Window, label_transition, find_moments
+    from sheet import make_clips, edit_md
+
+    ctls, end = result['ctls'], result['end']
+    moves, tl = find_moves(ctls), Timeline(ctls)
+    tracks, transitions = result['tracklist'], result['transitions']
+    duration = max(end, audio['duration'] if audio else 0)
+    drops = audio['drops'] if audio else []
+    for t in transitions:
+        if t['start'] is None and t['swap'] is None:
+            anchor = tracks[t['into']]['start']
+            t.update(style='unusual', styles=[], moment=anchor, confidence='low', t0=anchor - 10, t1=anchor + 30,
+                     evidence='the incoming deck never became audible')
+            continue
+        nxt = tracks[t['into'] + 1]['start'] if t['into'] + 1 < len(tracks) else None
+        w = Window(tl, moves, t['from_deck'], t['to_deck'], t['start'], t['swap'], t['end'], nxt, drops)
+        t.update(label_transition(w), t0=round(w.t0, 3), t1=round(w.t1, 3))
+    moments = find_moments(moves, tl, transitions, end)
+    clips = make_clips(tracks, transitions, moments, audio, duration)
+    unnamed = sum(1 for tr in tracks if not tr.get('title'))
+    names = names_reason or (f'{unnamed} unnamed (Rekordbox adds a track to its history after 60 s of play)'
+                             if unnamed else None)
+    md = edit_md(log_name, video, duration, tracks, transitions, moments, audio, audio_reason, moves, tl, clips,
+                 result['chapters'], names)
+    return moves, moments, clips, md
+
+
+def window(argv):
+    """Print the moves between two times: the detail behind any line of the edit sheet."""
+    from moves import find_moves, parse_time, window_lines
+    if len(argv) != 3:
+        sys.exit('usage: rekordbox_log.py window SET.rekordbox.jsonl FROM TO   (m:ss, h:mm:ss or seconds)')
+    header, events = load(Path(argv[0]))
+    vt = video_clock(header, events)
+    ctls = [{**e, 't': vt(e['t'])} for e in events if e['type'] == 'ctl']
+    print('\n'.join(window_lines(find_moves(ctls), parse_time(argv[1]), parse_time(argv[2]))) or '(no moves)')
 
 
 def main():
+    if sys.argv[1:2] == ['window']:
+        return window(sys.argv[2:])
+    import audio as audio_mod
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('log', type=Path)
     ap.add_argument('--out', type=Path, help='output folder (default: next to the log, <name>.analysis)')
+    ap.add_argument('--video', type=Path, help='the recording (default: the video next to the log)')
     args = ap.parse_args()
 
     header, events = load(args.log)
     end_t = events[-1]['t'] if events else 0
-    result = analyse(header, events, read_history(header, end_t))
+    history, names_reason = read_history(header, end_t)
+    result = analyse(header, events, history)
+    audio, video, audio_reason = audio_mod.load(args.log, args.video)
+    moves, moments, clips, md = build(result, args.log.name, audio, audio_reason, video, names_reason)
 
     out = args.out or args.log.with_name(args.log.name.removesuffix('.rekordbox.jsonl') + '.analysis')
     out.mkdir(parents=True, exist_ok=True)
     for name in ('tracklist', 'transitions', 'fx'):
         (out / f'{name}.json').write_text(json.dumps(result[name], indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     (out / 'chapters.txt').write_text(result['chapters'], encoding='utf-8')
-    print(f"{len(result['tracklist'])} tracks, {len(result['transitions'])} transitions, "
-          f"{len(result['fx'])} FX spans -> {out}")
+    (out / 'clips.json').write_text(json.dumps(clips, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    (out / 'moves.jsonl').write_text(''.join(json.dumps(m) + '\n' for m in moves), encoding='utf-8')
+    (out / 'edit.md').write_text(md, encoding='utf-8')
+    print(f"{len(result['tracklist'])} tracks, {len(result['transitions'])} transitions, {len(moments)} moments, "
+          f"{len(clips)} clips, audio: {'yes' if audio else audio_reason} -> {out / 'edit.md'}")
 
 
 def selftest():
@@ -330,7 +372,6 @@ def selftest():
     assert r['tracklist'][1]['deck'] == 2 and r['tracklist'][1]['start'] == 70
     (tr,) = r['transitions']
     assert (tr['start'], tr['swap'], tr['end']) == (72, 80, 90), tr
-    assert tr['moves'] == [{'t': 76, 'ctl': 'deck2.eq.low', 'v': 0.2}], tr['moves']
     assert r['fx'] == [{'fx': 'beat', 'start': 30, 'end': 40, 'channel': 1, 'level': 0.7}], r['fx']
     assert r['chapters'].splitlines() == [
         '# YouTube needs at least 3 chapters; this set has 2.',
