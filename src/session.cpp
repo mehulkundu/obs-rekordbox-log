@@ -51,7 +51,8 @@ FILE *open_new(const std::string &path)
 {
 	const std::string ext = ".rekordbox.jsonl";
 	FILE *f = fopen(path.c_str(), "wx");
-	if (f || errno != EEXIST || path.size() < ext.size() || path.compare(path.size() - ext.size(), ext.size(), ext) != 0)
+	if (f || errno != EEXIST || path.size() < ext.size() ||
+	    path.compare(path.size() - ext.size(), ext.size(), ext) != 0)
 		return f;
 	std::string stem = path.substr(0, path.size() - ext.size());
 	for (int n = 2; !f && errno == EEXIST && n < 1000; ++n)
@@ -109,8 +110,10 @@ bool sessions_open(const std::string &output, const std::string &path, uint64_t 
 		return false;
 	}
 	last_error.clear();
-	fprintf(f, "{\"type\":\"session\",\"v\":1,\"output\":%s,\"wall\":\"%s\",\"offset_ms\":0,\"obs\":%s,\"plugin\":%s}\n",
-		json_str(output).c_str(), wall_now().c_str(), json_str(obs_version).c_str(), json_str(plugin_version).c_str());
+	fprintf(f,
+		"{\"type\":\"session\",\"v\":1,\"output\":%s,\"wall\":\"%s\",\"offset_ms\":0,\"obs\":%s,\"plugin\":%s}\n",
+		json_str(output).c_str(), wall_now().c_str(), json_str(obs_version).c_str(),
+		json_str(plugin_version).c_str());
 	fflush(f);
 	open_sessions[output] = {f, start_host};
 	return true;

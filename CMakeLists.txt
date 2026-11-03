@@ -41,6 +41,10 @@ if(APPLE AND TARGET WrapOpenGL::WrapOpenGL)
   set_target_properties(WrapOpenGL::WrapOpenGL PROPERTIES INTERFACE_LINK_LIBRARIES "${_gl_libs}")
 endif()
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.cpp)
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE src/plugin-main.cpp src/controllers.cpp src/session.cpp src/midi.cpp src/dock.cpp
+)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "-framework CoreMIDI" "-framework CoreFoundation")
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
