@@ -112,10 +112,19 @@ A moment is skipped when a transition already has a match that covers it, within
 - **Features**, every 0.1 s (numpy FFT over 0.2 s frames): `bass` (30-150 Hz energy) and `rms`.
   `bass` is smoothed before any threshold, so the dips between kicks don't count: first a 0.6 s
   moving maximum (this bridges the gap between kicks at 100 BPM and up), then a 1 s moving mean.
-  `F` = 0.7 × the set's 95th-percentile smoothed bass, and "full" means at least `F`.
-- **Drops:** the smoothed bass reaches `F` and stays there for 8 s, after 20 s with no 2 s stretch
-  at `F`. A re-hit within 6 s of the last drop is the same drop. The drop time then moves back to
-  the first frame within 2 s before it where the raw `bass` passes 0.5F, which is the first kick.
+  "Full" means at least `F`, and `F` follows the music: 0.8 × the 80th percentile of the smoothed
+  bass within 45 s either side. A single threshold for the whole set fails because DJs mix tracks at
+  very different bass levels (on a real set, the quieter tracks never reached it). The 80th percentile
+  means one loud burst can't drag `F` up; ±45 s beats ±30 s and ±60 s on the real set.
+- **Drops:**
+  - The smoothed bass reaches `F` and holds for 8 s: at least `F` on average, and at least `F`
+    for 70% of that time.
+  - It comes after 12 s of music with no 2 s stretch at `F`. A real set's breakdowns ran about
+    15 s. Music must have been playing: if that stretch is mostly silence, it's the set starting,
+    not a drop.
+  - A re-hit within 6 s of the last drop is the same drop.
+  - The drop time then moves back to the first frame within 2 s before it where the raw `bass`
+    passes 0.5F, which is the first kick.
 - **Breakdowns:** at least 16 s with smoothed bass under 0.3F, after a drop.
 - **Silence:** `rms` under -50 dBFS for at least 1 s.
 - **Energy:** the mean smoothed bass per minute, scaled 0-7 against the set's loudest minute.

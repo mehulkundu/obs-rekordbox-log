@@ -73,8 +73,9 @@ def read_history(header, end_t):
     # Rekordbox stores created_at as naive local time
     start = datetime.fromisoformat(header['wall']).astimezone().replace(tzinfo=None)
     end = start + timedelta(seconds=end_t)
+    since = start - timedelta(minutes=15)  # a track played just before Record was logged then
     try:
-        rows = [s for s in MasterDatabase().get_history_songs().all() if start <= s.created_at <= end]
+        rows = [s for s in MasterDatabase().get_history_songs().all() if since <= s.created_at <= end]
     except Exception as err:  # database locked, key missing, schema changed
         return [], f'cannot read Rekordbox history ({err}): tracks are named by deck'
     out = []
@@ -141,6 +142,8 @@ def find_tracks(ctls, history, end_t):
 
     used = set()
     for h in history:
+        if h['t'] < 0:
+            continue  # from before Record: below
         names = {k: h[k] for k in ('title', 'artist', 'bpm', 'key', 'path')}
         free = [i for i, tr in enumerate(tracks) if i not in used and tr['i'] is not None and tr['start'] <= h['t']]
         if free:
@@ -149,6 +152,13 @@ def find_tracks(ctls, history, end_t):
             tracks[i].update(names)
         else:  # no load or play press to pair with
             tracks.append({'deck': None, 'load': None, 'start': h['t'], 'i': None, **names})
+    # A deck already loaded at Record may have played that track just before: Rekordbox logged it
+    # then, and doesn't log the same loaded track twice. Newest row first, to the earliest such track.
+    early = sorted((h for h in history if h['t'] < 0), key=lambda h: -h['t'])
+    waiting = sorted((tr for tr in tracks if tr['load'] is None and tr['i'] is not None and not tr.get('title')),
+                     key=lambda tr: tr['start'])
+    for h, tr in zip(early, waiting):
+        tr.update({k: h[k] for k in ('title', 'artist', 'bpm', 'key', 'path')}, before_record=True)
     # A track Rekordbox hasn't put in its history (it waits about a minute) is kept if it was
     # heard. One never heard was only previewed in headphones.
     tracks = [tr for tr in tracks if tr.get('title') or heard(tr, tracks, ctls)]

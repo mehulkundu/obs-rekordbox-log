@@ -223,10 +223,10 @@ def test_moments():
 
 # --- audio ---------------------------------------------------------------------------------------
 
-def kicks(x, sr, a, b, bpm=128):
+def kicks(x, sr, a, b, bpm=128, amp=0.8):
     import numpy as np
     seg = np.arange(int(0.15 * sr)) / sr
-    pulse = 0.8 * np.sin(2 * np.pi * 60 * seg) * np.exp(-seg * 25)
+    pulse = amp * np.sin(2 * np.pi * 60 * seg) * np.exp(-seg * 25)
     for t in np.arange(a, b, 60 / bpm):
         i = int(t * sr)
         x[i:i + pulse.size] += pulse[:len(x) - i]
@@ -253,6 +253,44 @@ def test_audio():
     assert b['silence'] == [(140.2, 142.0)], b['silence']
     a, why = analyse_audio(np.zeros(SR * 5, np.float32))
     assert a is None and 'silent' in why
+
+
+def test_audio_levels():
+    """From a real set: tracks mixed at very different bass levels, 15 s breaks before drops, a loud
+    burst, and the music starting out of silence (which is not a drop)."""
+    try:
+        import numpy as np
+    except ImportError:
+        print('  (audio tests skipped: numpy not installed)')
+        return
+    from audio import analyse_audio, SR
+    rng = np.random.default_rng(2)
+    z = np.convolve(0.03 * rng.standard_normal(200 * SR), [1, -1], mode='same')
+    z[:10 * SR] = 0                       # silence, then the set starts at 10 s
+    kicks(z, SR, 10, 60, amp=0.2)         # a quiet track
+    kicks(z, SR, 75, 100, amp=0.2)        # its drop after 15 s with no bass
+    kicks(z, SR, 115, 140, amp=1.0)       # a loud track comes in after a break
+    kicks(z, SR, 155, 200, amp=1.0)       # and drops after 15 s
+    z[185 * SR:188 * SR] *= 4             # a loud burst
+    a, _ = analyse_audio(z.astype(np.float32))
+    assert [round(d) for d in a['drops']] == [75, 115, 155], a['drops']
+
+
+def test_names_before_record():
+    """From a real set: deck 1's track was played before Record and restarted without reloading, so
+    its only history row is from before the recording. Deck 2's track never played 60 s in a row."""
+    ev = press(6.7, 'deck1.play') + press(67.9, 'deck2.play') + [{'t': 150, 'type': 'end'}]
+    hist = [{'title': 'Pre', 'artist': 'P', 'bpm': None, 'key': None, 'path': '/p', 't': -95.6}]
+    r = rl.analyse(HEADER, sorted(ev, key=lambda e: e['t']), hist)
+    got = [(t['deck'], t['start'], t.get('title'), t.get('before_record')) for t in r['tracklist']]
+    assert got == [(1, 6.7, 'Pre', True), (2, 67.9, None, None)], got  # no phantom track at -95.6 s
+
+
+def test_stutter_is_not_a_stop():
+    """A pause resumed within 2 s is a stutter, not a deck stopping by mistake."""
+    from sheet import stopped_while_audible
+    ev = base(bring_in(), press(31.5, 'deck2.play'), press(32.0, 'deck2.play'), press(50, 'deck1.play'))
+    assert stopped_while_audible(find_moves(ev), Timeline(ev)) == [(50, 1)]
 
 
 # --- real recordings and the size budget -----------------------------------------------------------

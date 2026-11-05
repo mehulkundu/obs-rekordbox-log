@@ -81,7 +81,9 @@ The folder also has `clips.json` (every clip, for scripts), `moves.jsonl` (every
 video, with paused time removed.
 
 Track names come from your Rekordbox play history, which Rekordbox writes while it runs. A track
-gets in once it has played for 60 seconds. Shorter ones are named by deck ("Deck 2").
+gets in once it has played for 60 seconds in a row (a pause restarts the count). Shorter ones are
+named by deck ("Deck 2"). A track you played just before pressing Record is named from the history
+before the recording, and marked so you can check it.
 Drops come from the video's audio, so add Rekordbox's output to OBS: an Audio Output Capture for
 Rekordbox, or your audio interface as an Audio Input Capture. Without audio, or without numpy and
 ffmpeg, the sheet still has everything except drops and energy, and says why.

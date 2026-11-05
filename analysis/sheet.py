@@ -81,8 +81,9 @@ def make_clips(tracks, transitions, moments, audio, duration):
         if style != 'drop':
             reasons.append(style)
         if audio:
-            from audio import bass_at
-            jump = (bass_at(audio, moment + 5) - bass_at(audio, moment - 5)) / audio['F'] if audio['F'] else 0
+            from audio import bass_at, full_at
+            ref = full_at(audio, moment)
+            jump = (bass_at(audio, moment + 5) - bass_at(audio, moment - 5)) / ref if ref else 0
             jump = max(0.0, min(2.0, jump))
             score += jump
             if jump >= 1:
@@ -101,13 +102,14 @@ def make_clips(tracks, transitions, moments, audio, duration):
 
 
 def stopped_while_audible(moves, tl):
-    """Play or cue presses that stopped a deck heard at 0.5 or more for the whole 0.5 s before."""
+    """Play or cue presses that stopped a deck heard at 0.5 or more for the whole 0.5 s before, and
+    not restarted within 2 s (a quick pause and play is a stutter, not a mistake)."""
     out = []
     for m in moves:
         for d in (1, 2):
             t = m['start']
             if m['ctl'] in (f'deck{d}.play', f'deck{d}.cue') and tl.is_playing(d, t - 0.001) \
-                    and not tl.is_playing(d, t) and all(tl.level(d, x) >= 0.5 for x in tl.samples(t - 0.5, t - 0.1)):
+                    and not tl.is_playing(d, t) and not tl.is_playing(d, t + 2) and all(tl.level(d, x) >= 0.5 for x in tl.samples(t - 0.5, t - 0.1)):
                 out.append((t, d))
     return out
 
@@ -130,6 +132,8 @@ def edit_md(log_name, video, duration, tracks, transitions, moments, audio, audi
     for i, (tr, (a, b)) in enumerate(zip(tracks, spans)):
         show = (tr['start'] if i == 0 else a) + 2
         name = label(tr) if tr.get('title') else f"(unnamed, deck {tr.get('deck')})"
+        if tr.get('before_record'):
+            name += ' [name from history before Record: check]'
         add(f'{stamp(a)}-{stamp(b)} on air | show {stamp(show)}-{stamp(show + 8)} | {name}'
             + (f" (deck {tr['deck']})" if tr.get('title') and tr.get('deck') else ''))
 
