@@ -49,11 +49,9 @@ def spans(mask, min_frames):
     return out
 
 
-def analyse_audio(x, sr=SR):
-    """Features and events from mono samples. Times are seconds from the start of the audio."""
+def features(x, sr=SR):
+    """Per frame (every HOP seconds, centred): bass energy (30-150 Hz) and RMS."""
     import numpy as np
-    if np.abs(x).max() < 10 ** (-60 / 20):
-        return None, 'the audio is silent (is Rekordbox captured in OBS?)'
     hop, size = int(sr * HOP), int(sr * FRAME)
     n = max(1, 1 + (len(x) - size) // hop)
     pad = np.pad(x, (size // 2, size))
@@ -61,10 +59,26 @@ def analyse_audio(x, sr=SR):
     freqs = np.fft.rfftfreq(size, 1 / sr)
     band = (freqs >= 30) & (freqs <= 150)
     bass, rms = np.empty(n), np.empty(n)
-    for i in range(n):  # frame i is centred on i * HOP seconds
+    for i in range(n):
         f = pad[i * hop:i * hop + size]
         bass[i] = (np.abs(np.fft.rfft(f * win))[band] ** 2).sum()
         rms[i] = np.sqrt(np.mean(f ** 2))
+    return bass, rms
+
+
+def analyse_audio(x, sr=SR):
+    """Features and events from mono samples. Times are seconds from the start of the audio."""
+    import numpy as np
+    if np.abs(x).max() < 10 ** (-60 / 20):
+        return None, 'the audio is silent (is Rekordbox captured in OBS?)'
+    bass, rms = features(x, sr)
+    return events(bass, rms, round(len(x) / sr, 2)), None
+
+
+def events(bass, rms, duration):
+    """Drops, breakdowns, silence and energy from the per-frame bass and RMS."""
+    import numpy as np
+    n = len(bass)
     # The dips between kicks must not count: a 0.6 s moving max bridges them at 100 BPM and up,
     # then a 1 s moving mean evens it out.
     m = int(round(0.6 / HOP))
@@ -72,32 +86,11 @@ def analyse_audio(x, sr=SR):
     k = int(round(1 / HOP))
     smooth = np.convolve(peak, np.ones(k) / k, mode='same')
     # "Full" bass is relative to the music around it: DJs mix tracks at very different bass levels.
-    # F = 0.8 x the 80th percentile within a minute either side (one loud burst can't drag it up).
+    # F = 0.8 x the 80th percentile within 45 s either side (one loud burst can't drag it up).
     F = np.empty(n)
     for i in range(0, n, 10):
         F[i:i + 10] = 0.8 * np.percentile(smooth[max(0, i - 450):i + 450], 80)
-    full = smooth >= F
-    silent = rms < 10 ** (-50 / 20)
-
-    held = np.convolve(full, np.ones(20), mode='full')[19:len(full) + 19] >= 20  # a 2 s run starts here
-    drops, last = [], None
-    for i in range(1, n):
-        if not full[i] or full[i - 1]:
-            continue
-        hold = slice(i, i + 80)  # 8 s: full on average, and most of the time
-        if smooth[hold].mean() < F[i] or full[hold].mean() < 0.7:
-            continue
-        before = slice(max(0, i - 120), i)  # 12 s of music without a 2 s full stretch
-        if held[max(0, i - 120):max(0, i - 20)].any() or silent[before].mean() > 0.5:
-            continue
-        t = i * HOP
-        if last is not None and t - last < 6:
-            continue
-        # back to the first kick: first frame in the 2 s before where raw bass passes 0.5F
-        lo = max(0, i - 20)
-        first = next((j for j in range(lo, i + 1) if bass[j] >= 0.5 * F[j]), i)
-        drops.append(round(first * HOP, 1))
-        last = t
+    drops = find_drops(smooth, bass, rms)
     after = int(drops[0] / HOP) if drops else n
     quiet = np.zeros(n, bool)
     quiet[after:] = smooth[after:] < 0.3 * F[after:]
@@ -108,7 +101,56 @@ def analyse_audio(x, sr=SR):
     top = max(minutes) or 1.0
     energy = [min(7, int(m / top * 7 + 0.5)) for m in minutes]
     return {'F': F, 'smooth': smooth, 'drops': drops, 'breakdowns': breakdowns,
-            'silence': silence, 'energy': energy, 'duration': round(len(x) / sr, 2)}, None
+            'silence': silence, 'energy': energy, 'duration': duration}
+
+
+JUMP_BASS = 8    # dB: bass in the 3 s after vs the 3 s before
+JUMP_LOUD = 5    # dB: loudness, the same way
+REHIT = 6        # dB: if the bass 5-12 s before was within this of the new level, it's the same drop
+
+
+def find_drops(smooth, bass, rms):
+    """A drop is a jump: after the energy falls away, the bass and the loudness come back much higher
+    and stay there. Measured on a real set (drops at 1:30, 2:48, 4:36): bass +10 to +50 dB, loudness
+    +7 to +12 dB. Returns the first kick of each drop, in seconds."""
+    import numpy as np
+    n = len(smooth)
+    music = rms >= 10 ** (-50 / 20)
+    cb = np.concatenate([[0], np.cumsum(smooth)])
+    cl = np.concatenate([[0], np.cumsum(rms ** 2)])
+
+    def mean_db(c, a, b):
+        a, b = max(0, a), min(n, b)
+        return 10 * np.log10(max((c[b] - c[a]) / (b - a), 1e-12)) if b > a else -120.0
+
+    hits = []
+    for i in range(30, n - 30):
+        after_b, before_b = mean_db(cb, i, i + 30), mean_db(cb, i - 30, i)
+        if after_b - before_b < JUMP_BASS:
+            continue
+        # it holds: every second from 3 to 10 s on stays at least 5 dB above where it was
+        if any(mean_db(cb, j, j + 10) < before_b + JUMP_BASS - 3 for j in range(i + 30, min(n, i + 100), 10)):
+            continue
+        if mean_db(cl, i, i + 30) - mean_db(cl, i - 30, i) < JUMP_LOUD:
+            continue
+        if music[max(0, i - 50):max(0, i - 10)].mean() < 0.8:  # out of music, not the set starting
+            continue
+        if mean_db(cb, i - 120, i - 50) > after_b - REHIT:  # it was already there: a re-hit
+            continue
+        hits.append((i, after_b - before_b, after_b))
+    drops, group = [], []
+    for h in hits + [None]:
+        if group and (h is None or h[0] - group[-1][0] > 80):
+            i, _, after_b = max(group, key=lambda g: g[1])
+            # the first kick: first frame from 3 s before where raw bass is within 5 dB of the new level
+            level = 10 ** ((after_b - 5) / 10)
+            first = next((j for j in range(max(0, i - 30), min(n, i + 30)) if bass[j] >= level), i)
+            if not drops or first * HOP - drops[-1] >= 6:
+                drops.append(round(first * HOP, 1))
+            group = []
+        if h is not None:
+            group.append(h)
+    return drops
 
 
 def frame(audio, t):

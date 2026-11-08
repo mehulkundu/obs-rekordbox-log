@@ -267,8 +267,8 @@ def test_audio_levels():
     rng = np.random.default_rng(2)
     z = np.convolve(0.03 * rng.standard_normal(200 * SR), [1, -1], mode='same')
     z[:10 * SR] = 0                       # silence, then the set starts at 10 s
-    kicks(z, SR, 10, 60, amp=0.2)         # a quiet track
-    kicks(z, SR, 75, 100, amp=0.2)        # its drop after 15 s with no bass
+    kicks(z, SR, 10, 60, amp=0.5)         # a quieter track
+    kicks(z, SR, 75, 100, amp=0.5)        # its drop after 15 s with no bass
     kicks(z, SR, 115, 140, amp=1.0)       # a loud track comes in after a break
     kicks(z, SR, 155, 200, amp=1.0)       # and drops after 15 s
     z[185 * SR:188 * SR] *= 4             # a loud burst
@@ -291,6 +291,55 @@ def test_stutter_is_not_a_stop():
     from sheet import stopped_while_audible
     ev = base(bring_in(), press(31.5, 'deck2.play'), press(32.0, 'deck2.play'), press(50, 'deck1.play'))
     assert stopped_while_audible(find_moves(ev), Timeline(ev)) == [(50, 1)]
+
+
+def test_audio_build_and_drop():
+    """The shape of a real drop (2:48 in a test set): the bass fades away over a few seconds, is gone
+    for about 4 s, then comes back much louder. A 4 s cut in the middle of full bass is a re-hit."""
+    try:
+        import numpy as np
+    except ImportError:
+        print('  (audio tests skipped: numpy not installed)')
+        return
+    from audio import analyse_audio, SR
+    rng = np.random.default_rng(3)
+    w = np.convolve(0.03 * rng.standard_normal(120 * SR), [1, -1], mode='same')
+    kicks(w, SR, 5, 30, amp=0.4)                       # the track plays
+    for k, t in enumerate(np.arange(30, 36, 60 / 128)):  # the build: kicks fading out over 6 s
+        kicks(w, SR, t, t + 0.1, amp=0.4 * (1 - k / 13))
+    kicks(w, SR, 40, 80, amp=1.0)                      # the drop, after 4 s with no bass
+    kicks(w, SR, 84, 120, amp=1.0)                     # a 4 s cut, then the same drop again
+    a, _ = analyse_audio(w.astype(np.float32))
+    assert [round(d) for d in a['drops']] == [40], a['drops']
+
+
+def test_audio_real_set():
+    """A real 7-minute set. The DJ's own timestamps: drops at 1:30 (Addictive), 2:48 (Bheegi Bheegi)
+    and 4:36 (SAPNE), and no others before 4:40. 3:17 (Sitta) and 6:17 (Jhoom) are past the DJ's notes
+    or not listed, but are drops by the same rule. The fixture is the set's bass and RMS per 0.1 s."""
+    try:
+        import numpy as np
+    except ImportError:
+        print('  (audio tests skipped: numpy not installed)')
+        return
+    from audio import events
+    f = np.load(HERE / 'fixtures' / 'set-2026-11-05-audio.npz')
+    drops = events(f['bass'].astype(float), f['rms'].astype(float), 418.0)['drops']
+    for t in (90, 168, 276):
+        assert any(abs(d - t) <= 1 for d in drops), (t, drops)
+    assert [round(d) for d in drops] == [90, 169, 198, 277, 377], drops
+
+
+def test_drop_not_mix_in():
+    """A jump in the audio while a fader comes up over a few seconds is a track being mixed in, not a
+    drop. A fader slammed up at the jump is a drop swap, so its drop stays."""
+    from rekordbox_log import drops_without_mix_ins
+    gradual = base(fade('deck2.fader', 29, 32, 0, 1))
+    slam = base(fade('deck2.fader', 30, 30.2, 0, 1))
+    eq = base(bring_in(), fade('deck2.eq.low', 9, 9.2, 0.5, 0), fade('deck2.eq.low', 49, 50, 0, 0.5))
+    assert drops_without_mix_ins([30.5, 80], find_moves(gradual)) == [80]
+    assert drops_without_mix_ins([30.1, 80], find_moves(slam)) == [30.1, 80]
+    assert drops_without_mix_ins([50.5], find_moves(eq)) == []
 
 
 # --- real recordings and the size budget -----------------------------------------------------------
