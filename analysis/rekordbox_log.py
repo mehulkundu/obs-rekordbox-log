@@ -281,16 +281,21 @@ def analyse(header, events, history):
             'ctls': ctls, 'end': end_t}
 
 
-def drops_without_mix_ins(drops, moves):
-    """Drops minus jumps that were a track being mixed in: a fader or low EQ raised by 0.3 or more
-    over more than 0.4 s, starting within 2 s of the jump. A fader slammed up at the jump (a drop
-    swap) keeps its drop."""
+def drops_without_mix_ins(drops, moves, tl=None):
+    """Drops minus jumps the DJ made, not the track:
+    - a track being mixed in: a fader or low EQ raised by 0.3 or more over more than 0.4 s, starting
+      within 2 s of the jump. A fader slammed up at the jump (a drop swap) keeps its drop.
+    - riding the Beat FX level with the effect on, within 2 s of the jump (it's the effect)."""
     def mixing(m):
         if not m['ctl'].endswith(('.fader', '.eq.low')) or 'from' not in m or m['to'] - m['from'] < 0.3:
             return False
         slam = m['end'] - m['start'] <= 0.4 and m['to'] >= 0.7
         return not slam
-    return [d for d in drops if not any(mixing(m) and abs(m['start'] - d) <= 2 for m in moves)]
+
+    def riding_fx(m, d):
+        return (tl is not None and m['ctl'] == 'fx.beat.level' and m['start'] - 2 <= d <= m['end'] + 2
+                and tl.fx_is_on(m['start']))
+    return [d for d in drops if not any((mixing(m) and abs(m['start'] - d) <= 2) or riding_fx(m, d) for m in moves)]
 
 
 def build(result, log_name, audio=None, audio_reason=None, video=None, names_reason=None):
@@ -305,7 +310,7 @@ def build(result, log_name, audio=None, audio_reason=None, video=None, names_rea
     tracks, transitions = result['tracklist'], result['transitions']
     duration = max(end, audio['duration'] if audio else 0)
     if audio:
-        audio['drops'] = drops_without_mix_ins(audio['drops'], moves)
+        audio['drops'] = drops_without_mix_ins(audio['drops'], moves, tl)
     drops = audio['drops'] if audio else []
     for t in transitions:
         if t['start'] is None and t['swap'] is None:

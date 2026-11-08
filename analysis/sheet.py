@@ -121,7 +121,7 @@ def edit_md(log_name, video, duration, tracks, transitions, moments, audio, audi
     add(f'# Edit sheet: {video.name if video else log_name}')
     add('')
     add(f'Set {stamp(duration)} | {len(tracks)} tracks | {len(transitions)} transitions | {len(clips)} clips')
-    add(f'Audio: {"from " + video.name if audio else "skipped, " + audio_reason}')
+    add(f'Audio: {("from " + (video.name if video else "the recording")) if audio else "skipped, " + audio_reason}')
     if names_missing:
         add(f'Names: {names_missing}')
     add('Times are video time. For any stretch in detail: see the footer.')

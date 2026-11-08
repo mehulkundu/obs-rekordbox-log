@@ -81,6 +81,18 @@ def test_timeline():
     assert tl.level(1, 31) == 0.0 and tl.level(2, 31) == 1.0  # crossfader hard to deck 2
 
 
+def test_fx_state_at_record():
+    """Rekordbox keeps the Beat FX on/off state, and the log can't see it at Record. The DJ rides the
+    level knob while the effect is on, so the start state is whichever puts more level moves while on."""
+    started_off = base(press(10, 'fx.beat.on'), fade('fx.beat.level', 12, 15, 0, 0.8), press(30, 'fx.beat.on'))
+    tl = Timeline(started_off)
+    assert not tl.fx_is_on(5) and tl.fx_is_on(13) and not tl.fx_is_on(35)
+    started_on = base(fade('fx.beat.level', 2, 5, 0, 0.8), press(10, 'fx.beat.on'), press(30, 'fx.beat.on'),
+                      fade('fx.beat.level', 32, 36, 0, 0.8))
+    tl = Timeline(started_on)
+    assert tl.fx_is_on(3) and not tl.fx_is_on(13) and tl.fx_is_on(33)
+
+
 # --- transition rules: each one just meets and just misses -----------------------------------------
 
 def test_bass_swap():
@@ -327,7 +339,24 @@ def test_audio_real_set():
     drops = events(f['bass'].astype(float), f['rms'].astype(float), 418.0)['drops']
     for t in (90, 168, 276):
         assert any(abs(d - t) <= 1 for d in drops), (t, drops)
-    assert [round(d) for d in drops] == [90, 169, 198, 277, 377], drops
+    assert [round(d) for d in drops] == [90, 169, 198, 277, 377], drops  # 377: see the next test
+
+
+def test_real_set_drops():
+    """The same set through the whole analysis, with its controller log: 6:17 was the DJ riding the
+    Beat FX level with the effect on, not a drop (the DJ confirmed). The drops are 1:30, 2:48, 3:17, 4:36."""
+    try:
+        import numpy as np
+    except ImportError:
+        print('  (audio tests skipped: numpy not installed)')
+        return
+    from audio import events
+    f = np.load(HERE / 'fixtures' / 'set-2026-11-05-audio.npz')
+    audio = events(f['bass'].astype(float), f['rms'].astype(float), 418.0)
+    ev = [json.loads(line) for line in gzip.open(HERE / 'fixtures' / 'set-2026-11-05.jsonl.gz', 'rt') if line.strip()]
+    result = rl.analyse(ev[0], ev[1:], [])
+    rl.build(result, 'set.rekordbox.jsonl', audio=audio)
+    assert [round(d) for d in audio['drops']] == [90, 169, 198, 277], audio['drops']
 
 
 def test_drop_not_mix_in():
@@ -340,6 +369,11 @@ def test_drop_not_mix_in():
     assert drops_without_mix_ins([30.5, 80], find_moves(gradual)) == [80]
     assert drops_without_mix_ins([30.1, 80], find_moves(slam)) == [30.1, 80]
     assert drops_without_mix_ins([50.5], find_moves(eq)) == []
+    fx = base(press(40, 'fx.beat.on'), fade('fx.beat.level', 49, 50, 0, 0.8))
+    assert drops_without_mix_ins([50.5, 80], find_moves(fx), Timeline(fx)) == [80]  # riding the FX level
+    off = base(press(40, 'fx.beat.on'), fade('fx.beat.level', 41, 44, 0, 0.8), press(45, 'fx.beat.on'),
+               fade('fx.beat.level', 49, 50, 0.8, 0))
+    assert drops_without_mix_ins([50.5], find_moves(off), Timeline(off)) == [50.5]  # knob moved, effect off
 
 
 # --- real recordings and the size budget -----------------------------------------------------------

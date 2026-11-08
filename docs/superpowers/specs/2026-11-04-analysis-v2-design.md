@@ -129,6 +129,11 @@ A moment is skipped when a transition already has a match that covers it, within
   frame from 3 s before where the raw bass is within 5 dB of the new level. Drops 6 s apart or less
   merge. In the analysis, a drop within 2 s of a fader or low EQ being raised by 0.3 or more over more
   than 0.4 s is a track being mixed in, not a drop. A fader slammed up at the jump (a drop swap) keeps it.
+  A jump while the DJ rides the Beat FX level (within 2 s of a level move, with the effect on) is the
+  effect, not a drop: on the real set, 6:17 was this, and the DJ confirmed it isn't a drop.
+- **Beat FX state at Record:** Rekordbox keeps the effect's on/off state, and the log can't see it at
+  Record. DJs ride the level knob while the effect is on, so the timeline starts the effect on if that
+  puts more level moves inside on-stretches than starting it off would.
 - **Breakdowns:** at least 16 s with smoothed bass under 0.3F, after a drop.
 - **Silence:** `rms` under -50 dBFS for at least 1 s.
 - **Energy:** the mean smoothed bass per minute, scaled 0-7 against the set's loudest minute.

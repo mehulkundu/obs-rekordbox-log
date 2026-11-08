@@ -87,6 +87,14 @@ class Timeline:
                 fx = not fx
                 self.fx_on[0].append(t)
                 self.fx_on[1].append(fx)
+        # Rekordbox keeps the Beat FX on/off state, so it may already be on at Record. DJs ride the
+        # level knob while the effect is on: start on if that puts more level moves while on.
+        self.fx_start = False
+        rides = self.values.get('fx.beat.level', ([], []))[0]
+        while_on = sum(1 for t in rides if self._at(self.fx_on, t, False))
+        if len(rides) - while_on > while_on:
+            self.fx_start = True
+            self.fx_on = (self.fx_on[0], [not on for on in self.fx_on[1]])
 
     @staticmethod
     def _at(series, t, default):
@@ -102,7 +110,7 @@ class Timeline:
         return self._at(self.playing[d], t, False)
 
     def fx_is_on(self, t):
-        return self._at(self.fx_on, t, False)
+        return self._at(self.fx_on, t, self.fx_start)
 
     def level(self, d, t):
         if not self.is_playing(d, t):
