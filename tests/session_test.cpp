@@ -29,7 +29,11 @@ int main()
 	sessions_event(t0, "\"type\":\"pause\"", "stream"); // another output: not written here
 	assert(sessions_status().outputs == std::vector<std::string>{"record"});
 	assert(sessions_status().events == 1);
-	sessions_close("record", t0);
+	auto closed = sessions_close("record", t0);
+	assert(closed.size() == 1 && closed[0].path == path);
+	assert(closed[0].start_ms > 1700000000000 && closed[0].stop_ms >= closed[0].start_ms);
+	assert(closed[0].wall.rfind("20", 0) == 0);
+	assert(sessions_close("record", t0).empty());
 
 	auto l = lines(path);
 	assert(l.size() == 3);
@@ -40,7 +44,8 @@ int main()
 
 	// a second session with the same name never overwrites the first
 	assert(sessions_open("record", path, t0, "33.0.1", "0.1.0"));
-	sessions_close_all(t0);
+	closed = sessions_close_all(t0);
+	assert(closed.size() == 1 && closed[0].path == std::string(dir) + "/set-2.rekordbox.jsonl");
 	assert(lines(path).size() == 3);
 	assert(lines(std::string(dir) + "/set-2.rekordbox.jsonl").size() == 2);
 

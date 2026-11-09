@@ -44,6 +44,11 @@ builds the moves from the raw log.
 **Tracks** work as in v1: by event order, including tracks loaded before Record, with history
 matched by its 60 s delay.
 
+**Track list:** names come from `<name>.tracks.json` (see `docs/format.md`), which the plugin writes
+on Stop, so the log, video and track list can be analysed on any computer. Without it, the
+analysis reads Rekordbox through pyrekordbox, up to 70 s after the end, and writes the file. Hand
+fixes (`start` rows) name the track starting nearest that time.
+
 **Levels:** a deck's level is fader × crossfader gain × playing. Controls start at their usual spot:
 - channel faders at 1.0
 - crossfader at 0.5
@@ -241,7 +246,8 @@ The two real logs become gzipped fixtures:
 
 ## Out of scope
 
-- Naming tracks under 60 s by matching their audio against the library files.
+- Naming tracks under 60 s by matching their audio against the library files (a hand fix in the
+  track list covers it).
 - Rekordbox phrase analysis (intro/chorus/outro from the ANLZ files).
 - The replay app.
 - Telling whether a mix sounded good (beatmatching, key clashes).

@@ -27,6 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <string>
 
 #include "dock.h"
+#include "history.h"
 #include "midi.h"
 #include "session.h"
 
@@ -89,6 +90,13 @@ void start(const char *output, const std::string &path)
 		obs_log(LOG_ERROR, "can't write %s", path.c_str());
 }
 
+// The track list is written once Rekordbox has caught up (or now, if OBS is closing).
+void save_tracks(const std::vector<ClosedSession> &closed)
+{
+	for (auto &c : closed)
+		tracks_schedule(c.path, c.wall, c.start_ms, c.stop_ms);
+}
+
 void on_event(enum obs_frontend_event e, void *)
 {
 	switch (e) {
@@ -96,7 +104,7 @@ void on_event(enum obs_frontend_event e, void *)
 		start("record", record_log_path());
 		break;
 	case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
-		sessions_close("record", host_now());
+		save_tracks(sessions_close("record", host_now()));
 		break;
 	case OBS_FRONTEND_EVENT_RECORDING_PAUSED:
 		sessions_event(host_now(), "\"type\":\"pause\"", "record");
@@ -108,10 +116,11 @@ void on_event(enum obs_frontend_event e, void *)
 		start("stream", recording_folder() + "/" + dated_name("stream"));
 		break;
 	case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
-		sessions_close("stream", host_now());
+		save_tracks(sessions_close("stream", host_now()));
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
-		sessions_close_all(host_now());
+		save_tracks(sessions_close_all(host_now()));
+		tracks_flush();
 		break;
 	default:
 		break;
@@ -134,6 +143,7 @@ void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(on_event, nullptr);
 	midi_stop(); // before closing sessions, so no MIDI callback writes to a closed file
-	sessions_close_all(host_now());
+	save_tracks(sessions_close_all(host_now()));
+	tracks_flush();
 	obs_log(LOG_INFO, "plugin unloaded");
 }

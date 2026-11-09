@@ -292,10 +292,46 @@ def test_names_before_record():
     """From a real set: deck 1's track was played before Record and restarted without reloading, so
     its only history row is from before the recording. Deck 2's track never played 60 s in a row."""
     ev = press(6.7, 'deck1.play') + press(67.9, 'deck2.play') + [{'t': 150, 'type': 'end'}]
-    hist = [{'title': 'Pre', 'artist': 'P', 'bpm': None, 'key': None, 'path': '/p', 't': -95.6}]
+    hist = [{'title': 'Pre', 'artist': 'P', 'bpm': None, 'key': None, 'file': '/p', 't': -95.6}]
     r = rl.analyse(HEADER, sorted(ev, key=lambda e: e['t']), hist)
     got = [(t['deck'], t['start'], t.get('title'), t.get('before_record')) for t in r['tracklist']]
     assert got == [(1, 6.7, 'Pre', True), (2, 67.9, None, None)], got  # no phantom track at -95.6 s
+
+
+def test_track_list_file():
+    """The plugin saves Rekordbox's history as <name>.tracks.json; the analysis reads it on any computer.
+    A row with "start" (video time) is a hand fix: it names the track starting nearest that time."""
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    log = d / 'set.rekordbox.jsonl'
+    assert rl.tracks_path(log) == d / 'set.tracks.json'
+    rows = [{'title': 'Pre', 'artist': 'P', 'bpm': 125.0, 'key': '1A', 'file': 'Pre.flac', 't': -95.6},
+            {'title': 'Two', 'artist': 'Q', 'bpm': None, 'key': '', 'file': 'Two.mp3', 't': 130.0}]
+    rl.write_tracks(rl.tracks_path(log), HEADER, rows)
+    text = rl.tracks_path(log).read_text()
+    assert text.count('\n') == 4 and '"logged": -95.6' in text, text  # one track per line, easy to fix by hand
+    got, fixes = rl.read_tracks(rl.tracks_path(log))
+    assert got == rows and fixes == [], got
+
+    data = json.loads(text)
+    data['tracks'].append({'start': '1:07', 'title': 'Fixed', 'artist': 'F'})
+    rl.tracks_path(log).write_text(json.dumps(data))
+    got, fixes = rl.read_tracks(rl.tracks_path(log))
+    assert fixes == [{'title': 'Fixed', 'artist': 'F', 'bpm': None, 'key': None, 'file': None, 'start': 67.0}]
+    ev = press(6.7, 'deck1.play') + press(67.9, 'deck2.play') + [{'t': 200, 'type': 'end'}]
+    r = rl.analyse(HEADER, sorted(ev, key=lambda e: e['t']), got, fixes)
+    names = [(t['deck'], t.get('title'), t.get('before_record')) for t in r['tracklist']]
+    assert names == [(1, 'Pre', True), (2, 'Fixed', None)], names
+
+
+def test_history_after_stop():
+    """A row Rekordbox logs after Stop (the last track hadn't played 60 s yet) names that track, and
+    never adds a track after the end."""
+    ev = press(5, 'deck1.play') + [{'t': 100, 'type': 'end'}]
+    hist = [{'title': 'Last', 'artist': 'L', 'bpm': None, 'key': None, 'file': 'l', 't': 65},
+            {'title': 'Later', 'artist': 'X', 'bpm': None, 'key': None, 'file': 'x', 't': 150}]
+    r = rl.analyse(HEADER, ev, hist)
+    assert [t.get('title') for t in r['tracklist']] == ['Last'], r['tracklist']
 
 
 def test_stutter_is_not_a_stop():
@@ -412,7 +448,7 @@ def test_budget():
             ev += fade('deck1.fader', t + 2, t + 3, 0, 1)
         ev += press(t + 80, f'deck{d}.pad.sampler.1') + fade(f'deck{d}.cfx', t + 100, t + 102, 0.5, 0.1) \
             + fade(f'deck{d}.cfx', t + 103, t + 105, 0.1, 0.5)
-        history.append({'title': f'Song {k + 1}', 'artist': 'Artist', 'bpm': 124.0, 'key': '8A', 'path': f'/{k}',
+        history.append({'title': f'Song {k + 1}', 'artist': 'Artist', 'bpm': 124.0, 'key': '8A', 'file': f'/{k}',
                         't': t + 61})
     ev = sorted(ev, key=lambda e: e['t']) + [{'t': 3600.0, 'type': 'end'}]
     result = rl.analyse(HEADER, ev, history)

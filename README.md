@@ -7,7 +7,7 @@ crossfader, FX and play/cue move on your controller, timed to the millisecond fr
 start of the recording. After the set, a small script joins that log with Rekordbox's play
 history to give you:
 
-- the tracklist with times
+- the tracklist with times (saved with the recording, so it works on any computer)
 - every transition (when it started, when the new track took over, when the old one left)
 - every effect and when it was on
 - YouTube chapters
@@ -53,7 +53,7 @@ The format is in [`docs/format.md`](docs/format.md).
 ## Analyse
 
 ```bash
-python3 -m pip install pyrekordbox numpy   # names and audio, both optional (use a venv if pip refuses)
+python3 -m pip install numpy pyrekordbox   # audio; pyrekordbox only for recordings without a track list
 python3 analysis/rekordbox_log.py ~/Movies/"My Set.rekordbox.jsonl"
 ```
 
@@ -80,10 +80,17 @@ The folder also has `clips.json` (every clip, for scripts), `moves.jsonl` (every
 `tracklist.json`, `transitions.json`, `fx.json` and `chapters.txt`. All times are seconds into the
 video, with paused time removed.
 
-Track names come from your Rekordbox play history, which Rekordbox writes while it runs. A track
-gets in once it has played for 60 seconds in a row (a pause restarts the count). Shorter ones are
-named by deck ("Deck 2"). A track you played just before pressing Record is named from the history
-before the recording, and marked so you can check it.
+Track names come from your Rekordbox play history. About a minute after you press Stop, the plugin
+saves the tracks you played to `My Set.tracks.json` next to the video (the Rekordbox Log dock
+says when). Send the video, the log and that file, and anyone can run the analysis without your
+Rekordbox. Only file names are saved, not your folders.
+
+A track gets into the history once it has played for 60 seconds in a row (a pause restarts the
+count). Shorter ones are named by deck ("Deck 2"); to name one, add a line with its start time to
+the track list, like `{"start": "1:09", "title": "Addictive", "artist": "..."}`. A track you played
+just before pressing Record is named from the history before the recording, and marked so you can
+check it. For recordings made before this, the script reads Rekordbox itself (with pyrekordbox)
+and writes the track list.
 Drops come from the video's audio, so add Rekordbox's output to OBS: an Audio Output Capture for
 Rekordbox, or your audio interface as an Audio Input Capture. Without audio, or without numpy and
 ffmpeg, the sheet still has everything except drops and energy, and says why.
@@ -105,8 +112,17 @@ Check your setup: `python3 analysis/test_analysis.py`.
   clang++ -std=c++17 src/session.cpp tests/session_test.cpp -o build/session_test && build/session_test
   ```
 
+  `tests/history_test.cpp` checks reading Rekordbox's history (build commands at the top of the file).
+
   `tests/fake_flx4.cpp` pretends to be a DDJ-FLX4 and plays a short mix, so you can test the plugin
   in OBS without the hardware (build and run commands are at the top of the file).
+
+## Rekordbox's library
+
+Rekordbox 6 and 7 encrypt their library (`master.db`) with one key shared by every install. The
+plugin carries that key (the same one [pyrekordbox](https://github.com/dylanljones/pyrekordbox)
+uses) and opens the library read-only with a bundled [SQLCipher](https://github.com/sqlcipher/sqlcipher)
+(BSD licence, `deps/sqlcipher`). It only reads the play history.
 
 ## Not affiliated
 

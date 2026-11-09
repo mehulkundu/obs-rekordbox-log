@@ -12,9 +12,13 @@
 // writes name-2.rekordbox.jsonl, name-3... Returns false and keeps the error if it can't write.
 bool sessions_open(const std::string &output, const std::string &path, uint64_t start_host,
 		   const std::string &obs_version, const std::string &plugin_version);
-// Writes {"t":...,"type":"end"} and closes.
-void sessions_close(const std::string &output, uint64_t host);
-void sessions_close_all(uint64_t host);
+struct ClosedSession {
+	std::string path, wall;    // the file actually written, and the header's wall clock
+	int64_t start_ms, stop_ms; // Unix ms
+};
+// Writes {"t":...,"type":"end"} and closes. Returns what was closed (nothing if it wasn't open).
+std::vector<ClosedSession> sessions_close(const std::string &output, uint64_t host);
+std::vector<ClosedSession> sessions_close_all(uint64_t host);
 // Appends {"t":<seconds since that session started>,<fields>} to every open session, or only to `output`.
 void sessions_event(uint64_t host, const std::string &fields, const std::string &output = "");
 

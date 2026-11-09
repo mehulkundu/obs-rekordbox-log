@@ -43,8 +43,28 @@ endif()
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE src/plugin-main.cpp src/controllers.cpp src/session.cpp src/midi.cpp src/dock.cpp
+  PRIVATE src/plugin-main.cpp src/controllers.cpp src/session.cpp src/midi.cpp src/dock.cpp src/history.cpp
 )
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "-framework CoreMIDI" "-framework CoreFoundation")
+
+# SQLCipher (vendored, BSD) to read Rekordbox's encrypted library, read-only. Static and hidden, so it
+# can't clash with the plain SQLite other plugins load.
+add_library(sqlcipher STATIC deps/sqlcipher/sqlite3.c)
+target_compile_definitions(
+  sqlcipher
+  PUBLIC SQLITE_HAS_CODEC
+  PRIVATE
+    SQLCIPHER_CRYPTO_CC
+    SQLITE_TEMP_STORE=2
+    SQLITE_THREADSAFE=1
+    SQLITE_OMIT_LOAD_EXTENSION
+    SQLITE_EXTRA_INIT=sqlcipher_extra_init
+    SQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown
+)
+target_include_directories(sqlcipher PUBLIC deps/sqlcipher)
+target_compile_options(sqlcipher PRIVATE -w)
+set_target_properties(sqlcipher PROPERTIES C_VISIBILITY_PRESET hidden COMPILE_WARNING_AS_ERROR OFF)
+target_link_libraries(sqlcipher PUBLIC "-framework Security")
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE sqlcipher)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

@@ -14,6 +14,8 @@ namespace {
 struct Session {
 	FILE *f;
 	uint64_t start;
+	std::string path, wall;
+	int64_t start_ms;
 };
 
 std::mutex mu; // guards everything below
@@ -32,11 +34,17 @@ double seconds(uint64_t from, uint64_t to)
 	return ticks * tb.numer / tb.denom / 1e9;
 }
 
-// 2026-11-03T21:00:01.123+05:30
-std::string wall_now()
+int64_t unix_ms()
 {
 	timeval tv;
 	gettimeofday(&tv, nullptr);
+	return int64_t(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+}
+
+// 2026-11-03T21:00:01.123+05:30
+std::string wall_text(int64_t ms)
+{
+	timeval tv = {time_t(ms / 1000), suseconds_t(ms % 1000 * 1000)};
 	tm lt;
 	localtime_r(&tv.tv_sec, &lt);
 	char base[32], tz[8], out[48];
@@ -47,7 +55,8 @@ std::string wall_now()
 }
 
 // Never overwrite an earlier log: set.rekordbox.jsonl, then set-2.rekordbox.jsonl, ...
-FILE *open_new(const std::string &path)
+// `path` becomes the file opened.
+FILE *open_new(std::string &path)
 {
 	const std::string ext = ".rekordbox.jsonl";
 	FILE *f = fopen(path.c_str(), "wx");
@@ -55,8 +64,11 @@ FILE *open_new(const std::string &path)
 	    path.compare(path.size() - ext.size(), ext.size(), ext) != 0)
 		return f;
 	std::string stem = path.substr(0, path.size() - ext.size());
-	for (int n = 2; !f && errno == EEXIST && n < 1000; ++n)
-		f = fopen((stem + "-" + std::to_string(n) + ext).c_str(), "wx");
+	for (int n = 2; !f && errno == EEXIST && n < 1000; ++n) {
+		std::string next = stem + "-" + std::to_string(n) + ext;
+		if ((f = fopen(next.c_str(), "wx")))
+			path = next;
+	}
 	return f;
 }
 
@@ -66,11 +78,14 @@ void write_line(Session &s, uint64_t host, const std::string &fields)
 	fflush(s.f); // a crash keeps everything up to here
 }
 
-void close_locked(std::map<std::string, Session>::iterator it, uint64_t host)
+ClosedSession close_locked(std::map<std::string, Session>::iterator it, uint64_t host)
 {
-	write_line(it->second, host, "\"type\":\"end\"");
-	fclose(it->second.f);
+	Session &s = it->second;
+	write_line(s, host, "\"type\":\"end\"");
+	fclose(s.f);
+	ClosedSession c = {s.path, s.wall, s.start_ms, unix_ms()};
 	open_sessions.erase(it);
+	return c;
 }
 
 } // namespace
@@ -104,33 +119,40 @@ bool sessions_open(const std::string &output, const std::string &path, uint64_t 
 	std::lock_guard<std::mutex> lock(mu);
 	if (auto it = open_sessions.find(output); it != open_sessions.end())
 		close_locked(it, start_host);
-	FILE *f = open_new(path);
+	std::string opened = path;
+	FILE *f = open_new(opened);
 	if (!f) {
 		last_error = "can't write " + path;
 		return false;
 	}
 	last_error.clear();
+	int64_t ms = unix_ms();
+	std::string wall = wall_text(ms);
 	fprintf(f,
 		"{\"type\":\"session\",\"v\":1,\"output\":%s,\"wall\":\"%s\",\"offset_ms\":0,\"obs\":%s,\"plugin\":%s}\n",
-		json_str(output).c_str(), wall_now().c_str(), json_str(obs_version).c_str(),
+		json_str(output).c_str(), wall.c_str(), json_str(obs_version).c_str(),
 		json_str(plugin_version).c_str());
 	fflush(f);
-	open_sessions[output] = {f, start_host};
+	open_sessions[output] = {f, start_host, opened, wall, ms};
 	return true;
 }
 
-void sessions_close(const std::string &output, uint64_t host)
+std::vector<ClosedSession> sessions_close(const std::string &output, uint64_t host)
 {
 	std::lock_guard<std::mutex> lock(mu);
+	std::vector<ClosedSession> out;
 	if (auto it = open_sessions.find(output); it != open_sessions.end())
-		close_locked(it, host);
+		out.push_back(close_locked(it, host));
+	return out;
 }
 
-void sessions_close_all(uint64_t host)
+std::vector<ClosedSession> sessions_close_all(uint64_t host)
 {
 	std::lock_guard<std::mutex> lock(mu);
+	std::vector<ClosedSession> out;
 	while (!open_sessions.empty())
-		close_locked(open_sessions.begin(), host);
+		out.push_back(close_locked(open_sessions.begin(), host));
+	return out;
 }
 
 void sessions_event(uint64_t host, const std::string &fields, const std::string &output)

@@ -62,3 +62,23 @@ reading the log work unchanged.
 - `fx.beat.on` (each press toggles), `fx.beat.select`, `fx.beat.prev`, `fx.beat.next`,
   `fx.beat.channel` (1 or 2), `fx.beat.level` (0..1)
 - `browse` (steps), `browse.press`
+
+## Track list (`<name>.tracks.json`)
+
+About 70 s after Stop (Rekordbox adds a track to its history 60 s into playing it), the plugin
+reads Rekordbox's play history, read-only, from 15 minutes before Record to 70 s after Stop, and
+writes it next to the log. If OBS closes sooner, it writes right away. It never overwrites an
+existing file, so hand fixes are kept. Only file names are saved, not folders.
+
+```json
+{"v":1,"session_wall":"2026-11-05T22:19:35.783+05:30","tracks":[
+  {"logged":179.955,"title":"Bheegi Bheegi","artist":"KV5 Dubai","bpm":125,"key":"1A","file":"Bheegi Bheegi - KV5 Dubai.flac"},
+  {"start":"1:09","title":"Addictive"}
+]}
+```
+
+- `logged`: seconds from the start of the recording (wall clock) when Rekordbox logged the track.
+  Negative for a track logged before Record.
+- A hand fix has `start` instead: the video time (seconds or `m:ss`) the track starts. It names
+  the track that starts nearest that time. Use it for tracks played under 60 s, which Rekordbox
+  never logs.

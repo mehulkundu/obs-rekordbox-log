@@ -1,5 +1,6 @@
 #include "dock.h"
 
+#include "history.h"
 #include "midi.h"
 #include "session.h"
 
@@ -27,6 +28,8 @@ QString status_text()
 	for (auto &o : s.outputs)
 		t += QString("Logging %1\n").arg(QString::fromStdString(o));
 	t += QString("Events: %1\n").arg(qulonglong(s.events));
+	if (std::string tracks = tracks_status(); !tracks.empty())
+		t += QString::fromStdString(tracks) + "\n";
 	if (!s.error.empty())
 		t += QString("\nError: %1\n").arg(QString::fromStdString(s.error));
 	return t;

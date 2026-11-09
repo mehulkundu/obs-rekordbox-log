@@ -20,6 +20,7 @@ AUDIBLE = 0.1
 # Rekordbox adds a track to its history once it has played this long (60.007 s measured on
 # Rekordbox 7.2 with a DDJ-FLX4).
 HISTORY_DELAY = 60
+NAME_KEYS = ('title', 'artist', 'bpm', 'key', 'file')
 
 
 def load(path):
@@ -72,7 +73,7 @@ def read_history(header, end_t):
 
     # Rekordbox stores created_at as naive local time
     start = datetime.fromisoformat(header['wall']).astimezone().replace(tzinfo=None)
-    end = start + timedelta(seconds=end_t)
+    end = start + timedelta(seconds=end_t + HISTORY_DELAY + 10)  # the last track is logged after Stop
     since = start - timedelta(minutes=15)  # a track played just before Record was logged then
     try:
         rows = [s for s in MasterDatabase().get_history_songs().all() if since <= s.created_at <= end]
@@ -85,9 +86,36 @@ def read_history(header, end_t):
             continue
         out.append({
             'title': c.Title, 'artist': c.ArtistName, 'bpm': c.BPM / 100 if c.BPM else None,
-            'key': c.KeyName, 'path': c.FolderPath, 't': (s.created_at - start).total_seconds(),
+            'key': c.KeyName, 'file': c.FileNameL, 't': (s.created_at - start).total_seconds(),
         })
     return out, None
+
+
+def tracks_path(log_path):
+    return log_path.with_name(log_path.name.removesuffix('.rekordbox.jsonl') + '.tracks.json')
+
+
+def read_tracks(path):
+    """(history rows, hand fixes) from a <name>.tracks.json. A row has "logged": seconds from Record
+    when Rekordbox logged it. A hand fix has "start": the video time (seconds or m:ss) the track starts."""
+    from moves import parse_time
+    rows, fixes = [], []
+    for e in json.loads(path.read_text(encoding='utf-8')).get('tracks', []):
+        names = {k: e.get(k) for k in NAME_KEYS}
+        if 'start' in e:
+            s = e['start']
+            fixes.append({**names, 'start': parse_time(s) if isinstance(s, str) else float(s)})
+        elif 'logged' in e:
+            rows.append({**names, 't': float(e['logged'])})
+    return rows, fixes
+
+
+def write_tracks(path, header, rows):
+    """The same file the plugin writes on Stop: one track per line, easy to fix by hand."""
+    lines = [json.dumps({'logged': round(h['t'], 3), **{k: h[k] for k in NAME_KEYS}}, ensure_ascii=False)
+             for h in rows]
+    path.write_text(f'{{"v": 1, "session_wall": {json.dumps(header["wall"])}, "tracks": [\n'
+                    + ',\n'.join('  ' + x for x in lines) + '\n]}\n', encoding='utf-8')
 
 
 def xfader_gain(deck, x):
@@ -144,13 +172,13 @@ def find_tracks(ctls, history, end_t):
     for h in history:
         if h['t'] < 0:
             continue  # from before Record: below
-        names = {k: h[k] for k in ('title', 'artist', 'bpm', 'key', 'path')}
+        names = {k: h[k] for k in NAME_KEYS}
         free = [i for i, tr in enumerate(tracks) if i not in used and tr['i'] is not None and tr['start'] <= h['t']]
         if free:
             i = min(free, key=lambda i: abs(h['t'] - tracks[i]['start'] - HISTORY_DELAY))
             used.add(i)
             tracks[i].update(names)
-        else:  # no load or play press to pair with
+        elif h['t'] <= end_t:  # no load or play press to pair with
             tracks.append({'deck': None, 'load': None, 'start': h['t'], 'i': None, **names})
     # A deck already loaded at Record may have played that track just before: Rekordbox logged it
     # then, and doesn't log the same loaded track twice. Newest row first, to the earliest such track.
@@ -158,7 +186,7 @@ def find_tracks(ctls, history, end_t):
     waiting = sorted((tr for tr in tracks if tr['load'] is None and tr['i'] is not None and not tr.get('title')),
                      key=lambda tr: tr['start'])
     for h, tr in zip(early, waiting):
-        tr.update({k: h[k] for k in ('title', 'artist', 'bpm', 'key', 'path')}, before_record=True)
+        tr.update({k: h[k] for k in NAME_KEYS}, before_record=True)
     # A track Rekordbox hasn't put in its history (it waits about a minute) is kept if it was
     # heard. One never heard was only previewed in headphones.
     tracks = [tr for tr in tracks if tr.get('title') or heard(tr, tracks, ctls)]
@@ -263,8 +291,9 @@ def chapters(tracks, transitions):
     return '\n'.join(lines) + '\n'
 
 
-def analyse(header, events, history):
-    """history: [{'title', 'artist', 'bpm', 'key', 'path', 't'}] with t in log seconds.
+def analyse(header, events, history, fixes=()):
+    """history: [{'title', 'artist', 'bpm', 'key', 'file', 't'}] with t in log seconds. fixes: hand
+    fixes from the track list, each naming the track that starts nearest its 'start' (video time).
     Everything comes back in video time."""
     vt = video_clock(header, events)
     ctls = [{**e, 't': vt(e['t'])} for e in events if e['type'] == 'ctl']
@@ -272,6 +301,11 @@ def analyse(header, events, history):
     history = [{**h, 't': vt(h['t'])} for h in history]
 
     tracks = find_tracks(ctls, history, end_t)
+    for f in fixes:
+        if tracks:
+            tr = min(tracks, key=lambda tr: abs(tr['start'] - f['start']))
+            tr.update({k: f[k] for k in NAME_KEYS})
+            tr.pop('before_record', None)
     transitions = find_transitions(tracks, ctls)
     fx = find_fx(ctls, end_t)
     for tr in tracks:
@@ -354,8 +388,16 @@ def main():
 
     header, events = load(args.log)
     end_t = events[-1]['t'] if events else 0
-    history, names_reason = read_history(header, end_t)
-    result = analyse(header, events, history)
+    track_list = tracks_path(args.log)
+    if track_list.exists():  # saved by the plugin on Stop, maybe fixed by hand
+        history, fixes = read_tracks(track_list)
+        names_reason = None
+    else:  # an older recording: read Rekordbox here, and keep the list with the log
+        fixes = []
+        history, names_reason = read_history(header, end_t)
+        if names_reason is None:
+            write_tracks(track_list, header, history)
+    result = analyse(header, events, history, fixes)
     audio, video, audio_reason = audio_mod.load(args.log, args.video)
     moves, moments, clips, md = build(result, args.log.name, audio, audio_reason, video, names_reason)
 
@@ -389,8 +431,8 @@ def selftest():
         c(120, 'deck1.eq.low', 0.5), {'t': 130, 'type': 'end'},
     ]
     history = [
-        {'title': 'One', 'artist': 'A', 'bpm': 122.0, 'key': '8A', 'path': '/1', 't': 20},
-        {'title': 'Two', 'artist': 'B', 'bpm': 123.0, 'key': '9A', 'path': '/2', 't': 75},
+        {'title': 'One', 'artist': 'A', 'bpm': 122.0, 'key': '8A', 'file': '/1', 't': 20},
+        {'title': 'Two', 'artist': 'B', 'bpm': 123.0, 'key': '9A', 'file': '/2', 't': 75},
     ]
 
     vt = video_clock(header, events)
@@ -417,14 +459,14 @@ def selftest():
     # down the whole time) is dropped. A heard one stays, even before it reaches the history.
     ev = [c(1, 'deck1.play', 1), c(5, 'deck2.load', 1), c(6, 'deck2.fader', 0.0), c(7, 'deck2.play', 1),
           c(30, 'deck1.load', 1), c(31, 'deck1.play', 1), {'t': 40, 'type': 'end'}]
-    r = analyse(header, ev, [{'title': 'Pre', 'artist': 'P', 'bpm': None, 'key': None, 'path': '/p', 't': 3}])
+    r = analyse(header, ev, [{'title': 'Pre', 'artist': 'P', 'bpm': None, 'key': None, 'file': '/p', 't': 3}])
     assert [(t['deck'], t['load'], t['start'], t.get('title')) for t in r['tracklist']] == \
         [(1, None, 1, 'Pre'), (1, 30, 31, None)], r['tracklist']
 
     # Real FLX4 session: a history row lands 60 s after its track starts, after another deck has
     # started. It belongs to the track that started 60 s earlier, not the latest one.
     ev = [c(8.484, 'deck1.load', 1), c(17.534, 'deck1.play', 1), c(51.253, 'deck2.play', 1), {'t': 94, 'type': 'end'}]
-    r = analyse(header, ev, [{'title': 'Vatta Vatta', 'artist': 'AFTERAll', 'bpm': 130.0, 'key': '4A', 'path': '/v', 't': 77.541}])
+    r = analyse(header, ev, [{'title': 'Vatta Vatta', 'artist': 'AFTERAll', 'bpm': 130.0, 'key': '4A', 'file': '/v', 't': 77.541}])
     assert [(t['deck'], t.get('title')) for t in r['tracklist']] == [(1, 'Vatta Vatta'), (2, None)], r['tracklist']
     print('selftest ok')
 
