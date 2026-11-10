@@ -326,9 +326,10 @@ def test_track_list_file():
 
 def test_history_after_stop():
     """A row Rekordbox logs after Stop (the last track hadn't played 60 s yet) names that track, and
-    never adds a track after the end."""
+    never adds a track after the end. Nor does a nameless row (its track has left the library)."""
     ev = press(5, 'deck1.play') + [{'t': 100, 'type': 'end'}]
     hist = [{'title': 'Last', 'artist': 'L', 'bpm': None, 'key': None, 'file': 'l', 't': 65},
+            {'title': None, 'artist': None, 'bpm': None, 'key': None, 'file': None, 't': 90},
             {'title': 'Later', 'artist': 'X', 'bpm': None, 'key': None, 'file': 'x', 't': 150}]
     r = rl.analyse(HEADER, ev, hist)
     assert [t.get('title') for t in r['tracklist']] == ['Last'], r['tracklist']

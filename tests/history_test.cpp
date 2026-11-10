@@ -41,7 +41,8 @@ static void make_db(const std::string &path)
 		"INSERT INTO djmdContent VALUES ('c2', 'No Artist', NULL, 0, NULL, 'x.mp3');"
 		"INSERT INTO djmdSongHistory VALUES ('h0', 'c1', '2026-11-05 16:20:00.000 +00:00');" // too early
 		"INSERT INTO djmdSongHistory VALUES ('h1', 'c1', '2026-11-05 16:47:00.500 +00:00');" // before Record
-		"INSERT INTO djmdSongHistory VALUES ('h2', 'c2', '2026-11-05 16:52:35.738 +00:00');";
+		"INSERT INTO djmdSongHistory VALUES ('h2', 'c2', '2026-11-05 16:52:35.738 +00:00');"
+		"INSERT INTO djmdSongHistory VALUES ('h3', 'gone', '2026-11-05 16:55:00.000 +00:00');"; // left the library
 	char *err = nullptr;
 	assert(sqlite3_exec(db, sql, nullptr, nullptr, &err) == SQLITE_OK);
 	sqlite3_close(db);
@@ -67,10 +68,12 @@ int main()
 	std::vector<HistoryRow> rows;
 	std::string error;
 	assert(history_read(lib + "/master.db", start - 15 * 60000, start + 10 * 60000, rows, error));
-	assert(rows.size() == 2);
+	assert(rows.size() == 3);
 	assert(rows[0].title == "Bheegi \"Bheegi\"" && rows[0].artist == "KV5 Dubai" && rows[0].bpm == 125 &&
 	       rows[0].key == "1A" && rows[0].file == "Bheegi Bheegi.flac");
 	assert(rows[1].artist.empty() && rows[1].bpm == 0);
+	assert(rows[2].title.empty() && rows[2].file.empty()); // kept, nameless: its time is still worth having
+	rows.pop_back();
 
 	std::string json = tracks_json("2026-11-05T22:18:00.000+05:30", start, rows);
 	assert(json ==
@@ -92,12 +95,21 @@ int main()
 	tracks_flush(); // OBS closing: written now, not in an hour
 	std::string out = std::string(dir) + "/set.tracks.json";
 	assert(slurp(out).find("\"logged\":-59.500") != std::string::npos);
-	assert(tracks_status() == "Track list: 2 tracks saved to set.tracks.json");
+	assert(tracks_status() == "Track list: 3 tracks saved to set.tracks.json");
 	std::ofstream(out) << "hand fixed";
 	tracks_schedule(log, "wall", start, start + 10 * 60000, 0);
 	tracks_flush();
 	assert(slurp(out) == "hand fixed");
 	assert(tracks_status() == "Track list: kept the existing set.tracks.json");
+
+	// a library moved in Rekordbox's Preferences: found through its options.json
+	std::string agent = std::string(dir) + "/Library/Application Support/Pioneer/rekordboxAgent/storage";
+	assert(system(("mkdir -p '" + agent + "'").c_str()) == 0);
+	std::ofstream(agent + "/options.json")
+		<< "{\"options\":[[\"db-path\",\"" << dir << "\\/moved.db\"],[\"dp\",\"x\"]]}";
+	tracks_schedule(std::string(dir) + "/moved.rekordbox.jsonl", "wall", start, start + 1000, 0);
+	tracks_flush();
+	assert(tracks_status() == "Track list: no Rekordbox library at " + std::string(dir) + "/moved.db");
 
 	std::puts("history ok");
 }

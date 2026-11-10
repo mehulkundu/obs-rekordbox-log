@@ -121,7 +121,7 @@ Check your setup: `python3 analysis/test_analysis.py`.
 
 Rekordbox 6 and 7 encrypt their library (`master.db`) with one key shared by every install. The
 plugin carries that key (the same one [pyrekordbox](https://github.com/dylanljones/pyrekordbox)
-uses) and opens the library read-only with a bundled [SQLCipher](https://github.com/sqlcipher/sqlcipher)
+uses) and opens the library read-only, wherever Rekordbox's `options.json` says it is, with a bundled [SQLCipher](https://github.com/sqlcipher/sqlcipher)
 (BSD licence, `deps/sqlcipher`). It only reads the play history.
 
 ## Not affiliated

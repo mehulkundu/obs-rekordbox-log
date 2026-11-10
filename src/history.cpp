@@ -10,13 +10,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <mutex>
+#include <sstream>
 #include <thread>
 
 namespace {
 
+// LEFT JOIN: a play whose track has left the library (removed device, unresolved stream) is kept
+// with no name, so its slot and time stay in the list to fill in by hand (rekordbox-connect v1.2.12).
 const char *QUERY = "SELECT h.created_at, c.Title, a.Name, c.BPM, k.ScaleName, c.FileNameL "
-		    "FROM djmdSongHistory h JOIN djmdContent c ON c.ID = h.ContentID "
+		    "FROM djmdSongHistory h LEFT JOIN djmdContent c ON c.ID = h.ContentID "
 		    "LEFT JOIN djmdArtist a ON a.ID = c.ArtistID LEFT JOIN djmdKey k ON k.ID = c.KeyID "
 		    "WHERE h.created_at >= ?1 AND h.created_at <= ?2 ORDER BY h.created_at";
 
@@ -32,10 +36,20 @@ bool write_now;
 std::vector<std::thread> workers;
 std::string status;
 
+// Where Rekordbox keeps its library: options.json has ["db-path","/…/master.db"] (a library moved
+// in Preferences lives elsewhere). Read the same way as pyrekordbox and rekordbox-connect.
 std::string default_db()
 {
-	const char *home = getenv("HOME");
-	return std::string(home ? home : "") + "/Library/Pioneer/rekordbox/master.db";
+	const char *h = getenv("HOME");
+	std::string home = h ? h : "";
+	std::stringstream ss;
+	ss << std::ifstream(home + "/Library/Application Support/Pioneer/rekordboxAgent/storage/options.json").rdbuf();
+	std::string s = ss.str(), path;
+	size_t p = s.find("\"db-path\"");
+	if (p != std::string::npos && (p = s.find('"', p + 9)) != std::string::npos)
+		for (++p; p < s.size() && s[p] != '"'; ++p)
+			path += s[p] == '\\' && p + 1 < s.size() ? s[++p] : s[p]; // \/ \\ \"
+	return path.empty() ? home + "/Library/Pioneer/rekordbox/master.db" : path;
 }
 
 void set_status(const std::string &s)

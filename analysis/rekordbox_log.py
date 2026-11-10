@@ -81,12 +81,10 @@ def read_history(header, end_t):
         return [], f'cannot read Rekordbox history ({err}): tracks are named by deck'
     out = []
     for s in sorted(rows, key=lambda s: s.created_at):
-        c = s.Content
-        if c is None:
-            continue
+        c = s.Content  # None when the track has left the library: kept, nameless, so it holds its slot
         out.append({
-            'title': c.Title, 'artist': c.ArtistName, 'bpm': c.BPM / 100 if c.BPM else None,
-            'key': c.KeyName, 'file': c.FileNameL, 't': (s.created_at - start).total_seconds(),
+            'title': c and c.Title, 'artist': c and c.ArtistName, 'bpm': c.BPM / 100 if c and c.BPM else None,
+            'key': c and c.KeyName, 'file': c and c.FileNameL, 't': (s.created_at - start).total_seconds(),
         })
     return out, None
 
@@ -178,7 +176,7 @@ def find_tracks(ctls, history, end_t):
             i = min(free, key=lambda i: abs(h['t'] - tracks[i]['start'] - HISTORY_DELAY))
             used.add(i)
             tracks[i].update(names)
-        elif h['t'] <= end_t:  # no load or play press to pair with
+        elif h['t'] <= end_t and h.get('title'):  # no load or play press to pair with
             tracks.append({'deck': None, 'load': None, 'start': h['t'], 'i': None, **names})
     # A deck already loaded at Record may have played that track just before: Rekordbox logged it
     # then, and doesn't log the same loaded track twice. Newest row first, to the earliest such track.
